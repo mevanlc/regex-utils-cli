@@ -42,7 +42,7 @@ names.
   [Regexp::Optimizer](https://metacpan.org/pod/Regexp%3A%3AOptimizer)
 - [x] `devdocs/regexp-assemble/PLAN.md` —
   [Regexp::Assemble](https://metacpan.org/pod/Regexp%3A%3AAssemble)
-- [ ] `devdocs/regex-presuf/PLAN.md` —
+- [x] `devdocs/regex-presuf/PLAN.md` —
   [Regex::PreSuf](https://metacpan.org/release/JHI/Regex-PreSuf-1.17)
 - [ ] `devdocs/regexp-trie/PLAN.md` —
   [Regexp::Trie](https://metacpan.org/pod/Regexp%3A%3ATrie)

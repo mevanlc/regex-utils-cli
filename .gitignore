@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Perl
+/local/
+
+# Node
+/node_modules/
+npm-debug.log*
+
+# Python
+/.venv/
+__pycache__/
+*.py[cod]
+
+# Rust
+/target/
+
+# C, C++, Conan, and CMake
+/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json

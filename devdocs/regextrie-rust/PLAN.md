@@ -115,7 +115,9 @@ Rust 1.87.
 
 ### Shared Rust package
 
-Create the root Cargo package shared by this and the later native grex plan:
+Create the root Cargo package for the project's custom Rust binaries. The later
+native grex plan reuses this toolchain and Cargo home, but installs grex's suitable
+upstream executable directly instead of adding a redundant binary target:
 
 ```toml
 [package]
@@ -137,9 +139,11 @@ serde_json = "=1.0.151"
 ```
 
 Use exact direct versions and commit the generated root `Cargo.lock`; registry
-checksums in the lock are the dependency integrity record. Later Rust plans must
-extend this package and lock rather than create a nested workspace or replace these
-versions without a combined compatibility review.
+checksums in the lock are the dependency integrity record. Later custom Rust binaries
+must extend this package and lock rather than create a nested workspace or replace
+these versions without a combined compatibility review. A suitable upstream CLI may
+instead use its published package lock through `cargo install --locked`, as specified
+by the native grex plan.
 
 Add root `rust-toolchain.toml`:
 

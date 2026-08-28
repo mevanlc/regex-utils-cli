@@ -79,7 +79,7 @@ names.
 
 - [x] `devdocs/regextrie-rust/PLAN.md` —
   [regextrie](https://github.com/axelberardino/regextrie)
-- [ ] `devdocs/grex-rust/PLAN.md` —
+- [x] `devdocs/grex-rust/PLAN.md` —
   [grex](https://github.com/pemistahl/grex), distinct from the npm/Node
   `grex-js` port listed above.
 

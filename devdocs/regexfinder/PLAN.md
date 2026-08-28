@@ -5,39 +5,44 @@
 Add `bin/regexfinder`, a project-local Python CLI for exercising the graph and
 matching APIs in `clockworkmicro/regexfinder`. Use the modernized
 [`mevanlc/regexfinder`](https://github.com/mevanlc/regexfinder) fork as a normal
-uv Git dependency after its packaging work lands. Expose three focused
-subcommands: `analyze` reports the graph's rendered regex and objective metrics,
-`optimize` runs the graph's phi-reduction pass and reports before/after metrics,
-and `search` exposes `NODE.match()` over ordered candidate strings.
+uv Git dependency pinned to commit
+`88b50c683f77c68ff232f75e111ea6650940c4b5`. Expose three focused subcommands:
+`analyze` reports the graph's rendered regex and objective metrics, `optimize`
+runs the graph's phi-reduction pass and reports before/after metrics, and `search`
+exposes `NODE.match()` over ordered candidate strings.
 
-The fork currently still matches upstream and is not installable: it has no
-Python project metadata, uses a top-level sibling import, and publishes no CLI.
+The pinned fork commit supplies the missing package metadata, `src/` layout,
+relative import, dependency declarations, uv lockfile, and deterministic pytest
+conversion while retaining the upstream API and algorithms. It publishes no CLI.
 Do not implement this plan against the unrelated package named `regexfinder` on
-PyPI. Modernizing and pinning the fork is an explicit prerequisite, defined
-below, rather than a reason to vendor loose source files into this project.
+PyPI or vendor loose upstream source files into this project.
 
 ## Verified Source Facts
 
 - The authoritative upstream is
   [`clockworkmicro/regexfinder`](https://github.com/clockworkmicro/regexfinder).
-  Its `main` branch and the new fork's `main` branch both resolved to commit
+  Its `main` branch resolved to commit
   `8ba5ff0f5a4b7852fb1945b08331a225e9339b60` at planning time. Upstream has no
-  tags or releases; the last commit is from December 2023.
+  tags or releases; that last commit is from December 2023.
+- Use fork commit
+  [`88b50c683f77c68ff232f75e111ea6650940c4b5`](https://github.com/mevanlc/regexfinder/commit/88b50c683f77c68ff232f75e111ea6650940c4b5),
+  whose distribution name and version are `regexfinder 0.0.0`. Pin the full SHA
+  in uv's Git source table; do not depend on the moving `main` branch.
 - [PyPI `regexfinder` 0.0.3](https://pypi.org/project/regexfinder/) is a different
   project by a different author. It finds regular expressions in text and does
   not contain the graph optimizer described by this plan. Never declare a bare
   registry dependency on `regexfinder`.
-- Upstream contains `regexfinder.py`, `utils.py`, notebooks, and ad hoc unittest
-  files, but no `pyproject.toml`, `setup.py`, `setup.cfg`, package directory, or
-  console entry point. Its `requirements.txt` is a macOS Intel conda environment
-  export from Python 3.7, not usable project metadata.
-- `regexfinder.py` eagerly imports NumPy, pandas, more-itertools, and the Python
-  `graphviz` package. It then imports `utils` as a top-level module. A packaged
-  fork must declare those four runtime dependencies and make the sibling import
-  package-relative before uv can install it reliably.
+- Upstream contains two loose modules, notebooks, and ad hoc unittest files, but
+  no project metadata, package directory, or console entry point. Its historical
+  `requirements.txt` is a macOS Intel conda environment export from Python 3.7,
+  not usable project metadata. The fork replaces that layout with a setuptools
+  PEP 517 project under `src/regexfinder/` and imports `.utils` relatively.
+- `regexfinder.core` eagerly imports NumPy, pandas, more-itertools, and the Python
+  `graphviz` package. The fork declares minimums `numpy>=1.21.5`, `pandas>=1.3.5`,
+  `more-itertools>=8.12`, and `graphviz>=0.19.1` as runtime dependencies.
 - Although the old environment says Python 3.7, source annotations such as
-  `dict[str, NODE]` require at least Python 3.9. The modernized fork will set and
-  test `requires-python = ">=3.10"`; this project will use the same floor.
+  `dict[str, NODE]` require at least Python 3.9. The fork declares and tests
+  `requires-python = ">=3.10"`; this project will use the same floor.
 - The defining `GRAPH` flow is `GRAPH(regex=..., alpha=...)`, `partition()`, then
   optional `reducePhi()`. The public `outRegex`, `cardinality`,
   `log2Cardinality`, `entropy`, `K`, and `phi` properties expose the graph's
@@ -77,15 +82,15 @@ below, rather than a reason to vendor loose source files into this project.
 - No upstream CLI exists. A custom wrapper is required, but it must stay at the
   API boundary above rather than repairing parser or optimizer behavior.
 
-A local feasibility probe loaded the baseline source on CPython 3.14.7 with
-`numpy 2.5.2`, `pandas 3.0.5`, `more-itertools 11.1.0`, and `graphviz 0.21`.
-`GRAPH.partition()`, metrics, `reducePhi()`, and `NODE.match()` ran. Optimization
-changed `a(b|c)d` to `a[bc]d` and lowered phi from 8 to 7. The current upstream
-suite ran 76 tests: 75 passed, while one assertion depended on process-global
-node IDs and failed after earlier tests advanced the counter. The probe also
-confirmed the leaf-phi defect, unsolicited debug output, and broken graph random
-generation. These observations characterize the pinned baseline; the project
-tests below remain the acceptance authority for the eventual fork commit.
+A local feasibility probe installed the exact fork commit through uv on CPython
+3.14.0. It resolved `numpy 2.5.2`, `pandas 3.0.5`, `more-itertools 11.1.0`, and
+`graphviz 0.21`; the installed `direct_url.json` recorded the requested full SHA,
+and the package exported callable `GRAPH` and `NODE` objects outside the source
+checkout. The fork's locked suite passed all 76 tests on CPython 3.10.20 and
+3.14.0. Direct probes confirmed that optimization still changes `a(b|c)d` to
+`a[bc]d` and lowers phi from 8 to 7, while the leaf-phi defect, unsolicited debug
+output, and broken graph random generation remain. Project tests below are the
+acceptance authority for the wrapper.
 
 ## Capability Coverage
 
@@ -94,39 +99,29 @@ tests below remain the acceptance authority for the eventual fork commit.
 | Core operation | Supported: partition a regex graph and report direct rendering, cardinality, entropy, complexity, and phi APIs. |
 | Regex optimization | Supported, with upstream limitations: call `reducePhi()` once and report its mutations without claiming language equivalence. |
 | Matching/search | Supported separately through `NODE.match()` and Python `re` match objects. |
-| Matching-text generation | Advertised but unusable at the baseline commit because `GRAPH.random` is defective; do not emulate it. Reconsider only after an upstream/fork fix with tests. |
+| Matching-text generation | Advertised but unusable at the pinned commit because `GRAPH.random` is defective; do not emulate it. Reconsider only after an upstream/fork fix with tests. |
 | Regex inference from samples | Unsupported; the unfinished word-collection code is not a stable inference API. |
 | Graph visualization | Available only through a forced write-and-view API; intentionally omitted from this noninteractive CLI. |
 
-## Modernized Fork Gate
+## Verified Modernized Fork Pin
 
-Implementation must not start by installing the current fork head. First land a
-modernization commit in `mevanlc/regexfinder` that satisfies all of these checks:
+Commit `88b50c683f77c68ff232f75e111ea6650940c4b5` satisfies the packaging gate:
 
-1. Add a PEP 517 `pyproject.toml` with distribution name `regexfinder`, an
-   explicit version, `requires-python = ">=3.10"`, an OSI-approved MIT license
-   declaration, and build configuration that installs both `regexfinder.py` and
-   `utils.py` in an import-safe package layout.
-2. Declare NumPy, pandas, more-itertools, and `graphviz` as runtime dependencies
-   using bounds justified by tests on Python 3.10 and the current Python release.
-   Remove the conda environment dump as an installation source; it may be kept
-   only as historical data if clearly labeled.
-3. Change the sibling `utils` import to a package-relative import and prove
-   `import regexfinder` works outside the repository directory after wheel
-   installation. Preserve the public `GRAPH` and `NODE` imports used here.
-4. Run a deterministic fork test suite on Python 3.10 and the current Python
-   release. Fix the global-ID-dependent assertion or isolate its state. Packaging
-   modernization need not silently alter the algorithmic defects cataloged above;
-   any such fix should have its own focused tests and this plan should be updated.
-5. Record the immutable 40-character commit ID that passes these gates in this
-   plan and in the root dependency declaration. The current baseline SHA is not
-   acceptable because it lacks project metadata. Do not use `main`, a moving tag,
-   a placeholder SHA, a local path dependency, or the unrelated PyPI artifact.
+1. Its PEP 517 `pyproject.toml` uses setuptools, distribution name `regexfinder`,
+   version `0.0.0`, MIT licensing, and `requires-python = ">=3.10"`.
+2. It declares all four eagerly imported runtime dependencies and locks its own
+   development environment with uv.
+3. Its `src/regexfinder/` package uses a relative `.utils` import and re-exports
+   the public API from `regexfinder.__init__`.
+4. Its pytest conversion replaces the process-global node-ID assertion with an
+   assertion on graph-node regexes. All 76 tests pass on Python 3.10 and 3.14.
+5. A fresh uv Git installation builds the wheel, imports outside either checkout,
+   and exposes the expected APIs with verifiable direct-URL provenance.
 
-Until that commit exists, this plan is intentionally blocked at Milestone 1. Once
-it exists, replace `MODERNIZED_COMMIT` in the declaration and commands below with
-that one exact SHA in the same commit that adds the dependency. This is a named
-implementation gate, not a value to copy literally into `pyproject.toml`.
+Use that exact commit. Do not use `main`, a moving tag, a local path dependency,
+or the unrelated PyPI artifact. Future fork revisions must be reviewed, tested on
+the same Python endpoints, and pinned by a new full SHA; update verified behavior
+in this plan if they alter any cataloged algorithmic limitation.
 
 ## Files and Dependency Setup
 
@@ -141,11 +136,14 @@ name = "regex-utils-cli"
 version = "0.0.0"
 requires-python = ">=3.10"
 dependencies = [
-  "regexfinder @ git+https://github.com/mevanlc/regexfinder.git@MODERNIZED_COMMIT",
+  "regexfinder",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+regexfinder = { git = "https://github.com/mevanlc/regexfinder.git", rev = "88b50c683f77c68ff232f75e111ea6650940c4b5" }
 ```
 
 Use `package = false` because this repository's deliverables are executable
@@ -153,11 +151,11 @@ scripts in `bin/`, not an installable aggregate Python distribution. Later Pytho
 plans must extend this one manifest and lockfile rather than create nested uv
 projects or replace this Python floor.
 
-After substituting the immutable SHA, create and lock the project with:
+Create and lock the project with:
 
 ```sh
 uv init --bare --python 3.10
-uv add 'regexfinder @ git+https://github.com/mevanlc/regexfinder.git@MODERNIZED_COMMIT'
+uv add 'regexfinder @ git+https://github.com/mevanlc/regexfinder.git@88b50c683f77c68ff232f75e111ea6650940c4b5'
 uv lock
 ```
 
@@ -179,8 +177,8 @@ locked environment:
 uv run --frozen -- ./bin/regexfinder --help
 ```
 
-To update later, choose a reviewed fork commit that passes the same gate, change
-the exact SHA in `pyproject.toml`, and run:
+To update later, choose a reviewed fork commit that passes the same checks, change
+the exact `rev` in `pyproject.toml`, and run:
 
 ```sh
 uv lock --upgrade-package regexfinder
@@ -228,10 +226,9 @@ bootstrap. `--version` must perform the dependency check and print:
 regexfinder <distribution-version> (mevanlc/regexfinder <full-commit-id>)
 ```
 
-Load the dependency inside `warnings.catch_warnings()` and suppress only
-`SyntaxWarning` originating from its pinned modules; the baseline uses invalid
-escape sequences in ordinary string literals under modern Python. Do not suppress
-other warning classes or warnings from wrapper code.
+Import the package normally. The modernization commit converted the baseline's
+invalid escape-sequence literals to raw strings, so the wrapper must not suppress
+`SyntaxWarning` or any other warning class.
 
 ## CLI Contract
 
@@ -407,10 +404,10 @@ $ printf 'car\ndog\n' | uv run --frozen -- ./bin/regexfinder search --boolean 'c
 
 ## Implementation Milestones
 
-1. **Modernize and pin the fork.** Complete the fork gate, amend this plan with
-   the passing commit ID, add the root uv application manifest, lock the exact Git
-   source and transitives, and prove installed provenance and imports from outside
-   both repositories on Python 3.10 and the current Python release.
+1. **Add and pin the fork.** Add the root uv application manifest, lock fork commit
+   `88b50c683f77c68ff232f75e111ea6650940c4b5` and its transitives, and prove
+   installed provenance and imports from outside both repositories on Python 3.10
+   and the current Python release.
 2. **Build common CLI plumbing.** Add subcommand dispatch, strict option parsing,
    deferred dependency checks, candidate-source handling, strict UTF-8 decoding,
    compact JSON, buffered output, help/version, and status-separated errors.
@@ -432,8 +429,6 @@ tests exercise the checkout script without shell quoting or a global package.
 
 ### Dependency and static checks
 
-After replacing the named commit placeholder:
-
 ```sh
 uv lock --check
 uv sync --python 3.10 --frozen
@@ -446,7 +441,7 @@ uv tree
 ```
 
 Assert the lock is unchanged, the installed distribution's `direct_url.json`
-names `mevanlc/regexfinder` and the exact modernization SHA, transitive packages
+names `mevanlc/regexfinder` and the exact pinned SHA, transitive packages
 come only from the lock, and imports work outside the repository. If 3.14 is no
 longer the current Python when implemented, replace that probe with the then-
 current stable release while retaining the 3.10 floor.
@@ -499,15 +494,15 @@ current stable release while retaining the 3.10 floor.
   exhaustion or catastrophic backtracking is an upstream/runtime risk, not a
   security boundary supplied by this exercise CLI.
 
-The fork's own unit suite is a modernization gate, but its historical global-ID
-assertion and debug prints are not copied into this project's acceptance suite.
-Project tests should make independent API and end-to-end assertions against the
-exact locked commit.
+The fork's 76-test suite is a dependency-update gate, but its internal assertions
+and debug prints are not copied into this project's acceptance suite. Project
+tests should make independent API and end-to-end assertions against the exact
+locked commit.
 
 ## Acceptance Criteria
 
-- The plan is amended with a real immutable fork commit that satisfies the
-  modernization gate; no implementation contains `MODERNIZED_COMMIT`.
+- The root uv source pins fork commit
+  `88b50c683f77c68ff232f75e111ea6650940c4b5` exactly.
 - A clean checkout creates only a project-local uv environment, installs the exact
   Git dependency and locked transitives, and never resolves the unrelated PyPI
   project or a global module.

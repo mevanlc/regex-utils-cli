@@ -53,7 +53,7 @@ names.
   [regexp-tree](https://github.com/DmitrySoshnikov/regexp-tree#usage-as-a-cli).
   It already exposes `regexp-tree-cli`; plan only the project-local npm
   dependency, invocation, and validation rather than another wrapper.
-- [ ] `devdocs/oniguruma-parser/PLAN.md` —
+- [x] `devdocs/oniguruma-parser/PLAN.md` —
   [oniguruma-parser](https://github.com/slevithan/oniguruma-parser)
 - [ ] `devdocs/grex-js/PLAN.md` —
   [grex-js](https://github.com/pemistahl/grex-js)

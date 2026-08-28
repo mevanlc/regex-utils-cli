@@ -57,7 +57,7 @@ names.
   [oniguruma-parser](https://github.com/slevithan/oniguruma-parser)
 - [x] `devdocs/grex-js/PLAN.md` —
   [grex-js](https://github.com/pemistahl/grex-js)
-- [ ] `devdocs/regex-trie-js/PLAN.md` —
+- [x] `devdocs/regex-trie-js/PLAN.md` —
   [regex-trie](https://github.com/alexeld/regex-trie)
 
 ### Python: project-local uv environment

@@ -49,7 +49,7 @@ names.
 
 ### npm/Node
 
-- [ ] `devdocs/regexp-tree/PLAN.md` —
+- [x] `devdocs/regexp-tree/PLAN.md` —
   [regexp-tree](https://github.com/DmitrySoshnikov/regexp-tree#usage-as-a-cli).
   It already exposes `regexp-tree-cli`; plan only the project-local npm
   dependency, invocation, and validation rather than another wrapper.

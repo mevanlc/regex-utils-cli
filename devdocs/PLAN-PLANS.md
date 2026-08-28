@@ -79,11 +79,16 @@ names.
 
 - [ ] `devdocs/regextrie-rust/PLAN.md` —
   [regextrie](https://github.com/axelberardino/regextrie)
+- [ ] `devdocs/grex-rust/PLAN.md` —
+  [grex](https://github.com/pemistahl/grex), distinct from the npm/Node
+  `grex-js` port listed above.
 
 ### C/C++ with Conan
 
 - [ ] `devdocs/regextrie-c/PLAN.md` —
   [RegexTrie](https://github.com/ikeofilic1/RegexTrie)
+- [ ] `devdocs/tre/PLAN.md` —
+  [TRE](https://github.com/laurikari/tre)
 - [ ] `devdocs/hyperscan/PLAN.md` —
   [Intel Hyperscan](https://github.com/intel/hyperscan), preferring the
   [Conan Center recipe](https://conan.io/center/recipes/hyperscan) if its current

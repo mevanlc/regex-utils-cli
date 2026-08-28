@@ -44,7 +44,7 @@ names.
   [Regexp::Assemble](https://metacpan.org/pod/Regexp%3A%3AAssemble)
 - [x] `devdocs/regex-presuf/PLAN.md` —
   [Regex::PreSuf](https://metacpan.org/release/JHI/Regex-PreSuf-1.17)
-- [ ] `devdocs/regexp-trie/PLAN.md` —
+- [x] `devdocs/regexp-trie/PLAN.md` —
   [Regexp::Trie](https://metacpan.org/pod/Regexp%3A%3ATrie)
 
 ### npm/Node

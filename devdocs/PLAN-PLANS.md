@@ -77,7 +77,7 @@ names.
 
 ### Rust
 
-- [ ] `devdocs/regextrie-rust/PLAN.md` —
+- [x] `devdocs/regextrie-rust/PLAN.md` —
   [regextrie](https://github.com/axelberardino/regextrie)
 - [ ] `devdocs/grex-rust/PLAN.md` —
   [grex](https://github.com/pemistahl/grex), distinct from the npm/Node

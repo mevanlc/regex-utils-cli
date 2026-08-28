@@ -71,7 +71,7 @@ names.
 
 ### JVM/JDK
 
-- [ ] `devdocs/frak/PLAN.md` — [frak](https://github.com/noprompt/frak).
+- [x] `devdocs/frak/PLAN.md` — [frak](https://github.com/noprompt/frak).
   Frak already has a command-line interface; plan a reproducible project-local
   JVM/Clojure dependency and direct invocation rather than another wrapper.
 

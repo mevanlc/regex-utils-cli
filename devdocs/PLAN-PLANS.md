@@ -64,7 +64,7 @@ names.
 
 - [x] `devdocs/regexfinder/PLAN.md` —
   [regexfinder](https://github.com/clockworkmicro/regexfinder)
-- [ ] `devdocs/triegex/PLAN.md` —
+- [x] `devdocs/triegex/PLAN.md` —
   [triegex](https://github.com/ZhukovAlexander/triegex)
 - [ ] `devdocs/retrie/PLAN.md` —
   [retrie](https://github.com/ddelange/retrie)

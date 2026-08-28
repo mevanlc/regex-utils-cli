@@ -55,7 +55,7 @@ names.
   dependency, invocation, and validation rather than another wrapper.
 - [x] `devdocs/oniguruma-parser/PLAN.md` —
   [oniguruma-parser](https://github.com/slevithan/oniguruma-parser)
-- [ ] `devdocs/grex-js/PLAN.md` —
+- [x] `devdocs/grex-js/PLAN.md` —
   [grex-js](https://github.com/pemistahl/grex-js)
 - [ ] `devdocs/regex-trie-js/PLAN.md` —
   [regex-trie](https://github.com/alexeld/regex-trie)

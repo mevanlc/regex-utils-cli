@@ -62,7 +62,7 @@ names.
 
 ### Python: project-local uv environment
 
-- [ ] `devdocs/regexfinder/PLAN.md` —
+- [x] `devdocs/regexfinder/PLAN.md` —
   [regexfinder](https://github.com/clockworkmicro/regexfinder)
 - [ ] `devdocs/triegex/PLAN.md` —
   [triegex](https://github.com/ZhukovAlexander/triegex)

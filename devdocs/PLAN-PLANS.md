@@ -66,7 +66,7 @@ names.
   [regexfinder](https://github.com/clockworkmicro/regexfinder)
 - [x] `devdocs/triegex/PLAN.md` —
   [triegex](https://github.com/ZhukovAlexander/triegex)
-- [ ] `devdocs/retrie/PLAN.md` —
+- [x] `devdocs/retrie/PLAN.md` —
   [retrie](https://github.com/ddelange/retrie)
 
 ### JVM/JDK
@@ -136,9 +136,8 @@ different choice:
 - JVM: a checked-in Clojure/JVM dependency declaration and project-local command
   that works with the JDK, without publishing or globally installing Frak.
 - Rust: a Cargo package or workspace member with its dependency locked.
-- C/C++: Conan 2 plus a checked-in CMake build. Use Conan Center for Hyperscan;
-  plan a local pinned recipe/source integration for RegexTrie if no suitable
-  registry package exists.
+- C/C++: Conan 2 plus a checked-in CMake build. Use compatible Conan Center
+  recipes where available; otherwise plan local pinned recipe/source integration.
 
 ### 3. CLI interface and data flow
 
@@ -201,7 +200,7 @@ stable.
    the first plans authored.
 2. Author plans by ecosystem so dependency and build decisions can be reconciled
    together: Perl, Node, Python, JVM, Rust, then C/C++.
-3. Re-read all 15 plans as one implementation sequence. Resolve executable-name,
+3. Re-read all 17 plans as one implementation sequence. Resolve executable-name,
    manifest, lockfile, build-directory, and bootstrap-command conflicts.
 4. Confirm every inventory checkbox has a child plan and every child plan contains
    verified sources, dependency setup, an exact CLI contract, milestones, and

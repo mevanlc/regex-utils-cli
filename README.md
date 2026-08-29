@@ -239,3 +239,76 @@ perl -c bin/regex-presuf
 perl -c bin/regexp-trie
 prove -v t
 ```
+
+## Node setup
+
+The Node commands share one root manifest and lockfile. Install the exact
+project-local dependency graph with Node and npm:
+
+```sh
+npm ci
+```
+
+No global npm packages are used. Invoke commands through their npm scripts so
+resolution stays inside this checkout.
+
+## regexp-tree
+
+The project directly exposes the official `regexp-tree-cli` 0.0.21 command; it
+does not add a wrapper. That CLI pins and exercises `regexp-tree` 0.1.27.
+
+```text
+npm run --silent regexp-tree -- [UPSTREAM OPTIONS]
+
+Upstream options:
+  -e, --expression REGEXP     Slash-delimited regex literal; required
+  -l, --loc                   Capture AST node locations while parsing
+  -o, --optimize              Optimize and regenerate the expression
+  -c, --compat                Transpile newer/extended features for compatibility
+  -t, --table TYPE            Print nfa, dfa, or all transition tables
+  -h, --help                  Show native help
+  -v, --version               Show the CLI package version
+```
+
+Expressions must be one quoted `/Body/OptionalFlags` argument. The command has
+no file or stdin input mode. With no operation flag it prints a two-space-indented
+ECMAScript-style AST; `--loc`, optimization, compatibility transpilation, and
+educational NFA/DFA tables retain their native output and status behavior.
+
+```console
+$ FORCE_COLOR=0 npm run --silent regexp-tree -- -e '/a|b/i'
+{
+  "type": "RegExp",
+  "body": {
+    "type": "Disjunction",
+    "left": {
+      "type": "Char",
+      "value": "a",
+      "kind": "simple",
+      "symbol": "a",
+      "codePoint": 97
+    },
+    "right": {
+      "type": "Char",
+      "value": "b",
+      "kind": "simple",
+      "symbol": "b",
+      "codePoint": 98
+    }
+  },
+  "flags": "i"
+}
+
+$ FORCE_COLOR=0 npm run --silent regexp-tree -- \
+    -e '/[a-zA-Z_0-9][A-Z_\da-z]*e{1,}/' --optimize
+
+ Optimized: /\w+e+/
+
+```
+
+Native precedence is `optimize`, then `compat`, then `table`, then parse; these
+options are alternatives rather than a pipeline. `--loc` affects only parse mode.
+Unknown options and extra operands are silently ignored upstream, and not every
+parsed construct is supported by automaton conversion. Output may include ANSI
+styling even when redirected; use `FORCE_COLOR=0` for deterministic output. This
+CLI does not expose matching, sample inference, or matching-text generation.

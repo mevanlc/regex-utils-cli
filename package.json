@@ -1,0 +1,12 @@
+{
+  "name": "regex-utils-cli",
+  "private": true,
+  "scripts": {
+    "regexp-tree": "node ./node_modules/regexp-tree-cli/bin/regexp-tree-cli",
+    "test": "node --test",
+    "test:regexp-tree": "node --test test/regexp-tree-cli.test.js"
+  },
+  "dependencies": {
+    "regexp-tree-cli": "0.0.21"
+  }
+}

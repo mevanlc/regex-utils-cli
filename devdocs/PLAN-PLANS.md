@@ -26,8 +26,10 @@ the child plans and their later implementation.
   exit statuses, and `--help`.
 - Keep all dependencies project-local and reproducibly pinned or locked.
 - Treat `ddelange/retrie` as one Python library; do not create a Node plan for it.
-- Treat Intel Hyperscan as a C/C++ dependency with a C API and investigate the
-  Conan Center package as the preferred installation route.
+- Choose the smallest useful native dependency setup. Use CMake alone when pinned
+  source and the platform toolchain are sufficient; add Conan 2 only when its package
+  or transitive-dependency management materially helps. Evaluate Intel Hyperscan's
+  Conan Center package under that rule rather than assuming it is required.
 
 ## Child Plan Inventory
 
@@ -83,16 +85,16 @@ names.
   [grex](https://github.com/pemistahl/grex), distinct from the npm/Node
   `grex-js` port listed above.
 
-### C/C++ with Conan
+### C and C++ native builds
 
-- [ ] `devdocs/regextrie-c/PLAN.md` —
+- [x] `devdocs/regextrie-c/PLAN.md` —
   [RegexTrie](https://github.com/ikeofilic1/RegexTrie)
 - [ ] `devdocs/tre/PLAN.md` —
   [TRE](https://github.com/laurikari/tre)
 - [ ] `devdocs/hyperscan/PLAN.md` —
-  [Intel Hyperscan](https://github.com/intel/hyperscan), preferring the
-  [Conan Center recipe](https://conan.io/center/recipes/hyperscan) if its current
-  package is compatible with the target system.
+  [Intel Hyperscan](https://github.com/intel/hyperscan), considering the
+  [Conan Center recipe](https://conan.io/center/recipes/hyperscan) if it improves the
+  current target's setup.
 
 ## Required Child Plan Structure
 
@@ -136,8 +138,9 @@ different choice:
 - JVM: a checked-in Clojure/JVM dependency declaration and project-local command
   that works with the JDK, without publishing or globally installing Frak.
 - Rust: a Cargo package or workspace member with its dependency locked.
-- C/C++: Conan 2 plus a checked-in CMake build. Use compatible Conan Center
-  recipes where available; otherwise plan local pinned recipe/source integration.
+- C/C++: a checked-in CMake build with immutable source or package inputs. Add Conan
+  2 only where it usefully resolves a package or dependency graph; source-only
+  libraries with no external dependencies should use CMake directly.
 
 ### 3. CLI interface and data flow
 

@@ -181,13 +181,61 @@ retain input order. Duplicate samples collapse upstream. The command compile-che
 the returned body but does not add matching, anchors, sorting, deduplication, or another
 optimization pass.
 
-### Tests
+## Regexp::Trie
+
+`bin/regexp-trie` inserts literal samples into Regexp::Trie 0.02, invokes the
+library's `regexp` method once, and prints the compiled regex body without Perl's
+outer modifier wrapper.
+
+```text
+Usage: regexp-trie [OPTIONS] [SAMPLE ...]
+
+Input:
+  SAMPLE ...                  Each positional argument is one literal sample
+  -i, --input FILE            Read one sample per line; repeatable; use - for stdin
+
+Options:
+  -h, --help                  Print help and exit
+  -V, --version               Print the command and module version and exit
+```
+
+Its source rules match `regex-presuf`: choose positional samples, repeatable files,
+or stdin; file records are LF-delimited strict UTF-8 with an optional preceding CR;
+empty records are samples; and zero records are an error. Each sample is passed
+unchanged to one `add` call.
+
+```console
+$ printf '%s\n' foobar fooxar foozap fooza | bin/regexp-trie
+foo(?:bar|xar|zap?)
+
+$ bin/regexp-trie 'a+b' 'a.b' 'a*b'
+a(?:\*b|\+b|\.b)
+
+$ bin/regexp-trie cat car
+ca[rt]
+```
+
+Inputs are always literal. The library shares prefixes, forms character classes,
+and makes tails optional, but it does not factor arbitrary suffixes: `foobar` and
+`xxbar` remain `(?:foobar|xxbar)`. Sibling keys are sorted by the library, so output
+is deterministic for a decoded sample set rather than insertion ordered. Duplicate
+samples collapse in the trie. Output is UTF-8, unanchored, and has no selectable
+modifiers.
+
+An empty sample is supported; empty plus `foo` produces `(?:foo)?`. Version 0.02
+emits a known uninitialized-value warning when every sample is empty even though it
+returns a valid empty regex. The wrapper suppresses only that exact case. Any other
+module warning is a failure, and no wrapper-side sorting, suffix factoring, matching,
+or optimization is added.
+
+## Tests
 
 ```sh
-PERL5LIB=local/lib/perl5 perl -MRegexp::Optimizer -MRegexp::Assemble -MRegex::PreSuf -e \
-  'die unless $Regexp::Optimizer::VERSION eq q{0.23} && $Regexp::Assemble::VERSION eq q{0.38} && $Regex::PreSuf::VERSION eq q{1.17}'
+PERL5LIB=local/lib/perl5 perl -MRegexp::Optimizer -MRegexp::Assemble -MRegex::PreSuf -MRegexp::Trie -e \
+  'die unless $Regexp::Optimizer::VERSION eq q{0.23} && $Regexp::Assemble::VERSION eq q{0.38} && $Regex::PreSuf::VERSION eq q{1.17} && $Regexp::Trie::VERSION eq q{0.02}'
 perl -c bin/regexp-optimizer
 perl -c bin/regexp-assemble
 perl -c bin/regex-presuf
+perl -c bin/regexp-trie
 prove -v t
 ```

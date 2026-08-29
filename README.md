@@ -138,12 +138,56 @@ some lookahead expressions can be incorrect. Disabling reduction is a diagnostic
 not a general correctness guarantee. Every emitted assembly is nevertheless compiled
 by the library before it is printed.
 
+## Regex::PreSuf
+
+`bin/regex-presuf` passes literal samples to Regex::PreSuf 1.17 exactly once and
+prints the compact Perl regex body returned by the library.
+
+```text
+Usage: regex-presuf [OPTIONS] [SAMPLE ...]
+
+Input:
+  SAMPLE ...                  Each positional argument is one literal sample
+  -i, --input FILE            Read one sample per line; repeatable; use - for stdin
+
+Options:
+  -s, --strategy TYPE         prefix, both, or suffix; default prefix
+  -a, --anychar               Treat dots in samples as one-character wildcards
+  -h, --help                  Print help and exit
+  -V, --version               Print the command and module version and exit
+```
+
+Choose positional samples, repeatable input files, or stdin. File and stdin records
+use strict UTF-8 and LF delimiters; a preceding CR is removed, a final LF does not add
+another sample, and one blank line represents one empty sample. Zero records are an
+error. Empty positional arguments and all other whitespace are preserved.
+
+```console
+$ printf '%s\n' foobar fooxar foozap | bin/regex-presuf
+foo(?:bar|xar|zap)
+
+$ bin/regex-presuf --strategy both foobar fooxar foozap
+foo(?:zap|[bx]ar)
+
+$ bin/regex-presuf --anychar foo.bar fooxbar
+foo.bar
+```
+
+Inputs are literal, not regex bodies: Regex::PreSuf quotes regex punctuation itself.
+Only `--anychar` changes that rule by deliberately restoring input dots as one-character
+wildcards. `prefix` uses the library default, `both` enables suffix factoring, and
+`suffix` disables prefix factoring. Output is unanchored, has no modifiers, and may not
+retain input order. Duplicate samples collapse upstream. The command compile-checks
+the returned body but does not add matching, anchors, sorting, deduplication, or another
+optimization pass.
+
 ### Tests
 
 ```sh
-PERL5LIB=local/lib/perl5 perl -MRegexp::Optimizer -MRegexp::Assemble -e \
-  'die unless $Regexp::Optimizer::VERSION eq q{0.23} && $Regexp::Assemble::VERSION eq q{0.38}'
+PERL5LIB=local/lib/perl5 perl -MRegexp::Optimizer -MRegexp::Assemble -MRegex::PreSuf -e \
+  'die unless $Regexp::Optimizer::VERSION eq q{0.23} && $Regexp::Assemble::VERSION eq q{0.38} && $Regex::PreSuf::VERSION eq q{1.17}'
 perl -c bin/regexp-optimizer
 perl -c bin/regexp-assemble
+perl -c bin/regex-presuf
 prove -v t
 ```

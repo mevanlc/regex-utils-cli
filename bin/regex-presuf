@@ -1,0 +1,187 @@
+#!/usr/bin/env perl
+
+use v5.8.1;
+use strict;
+use warnings;
+
+use Encode qw(FB_CROAK decode encode);
+use FindBin qw($Bin);
+use Getopt::Long ();
+use lib "$Bin/../local/lib/perl5";
+no re 'eval';
+
+my $PROGRAM = 'regex-presuf';
+my $USAGE = <<'USAGE';
+Usage: regex-presuf [OPTIONS] [SAMPLE ...]
+
+Infer a compact Perl regex from literal samples.
+
+Input:
+  SAMPLE ...                  Each positional argument is one literal sample
+  -i, --input FILE            Read one sample per line; repeatable; use - for stdin
+
+Options:
+  -s, --strategy TYPE         prefix, both, or suffix; default prefix
+  -a, --anychar               Treat dots in samples as one-character wildcards
+  -h, --help                  Print help and exit
+  -V, --version               Print the command and module version and exit
+USAGE
+
+binmode STDIN,  ':raw';
+binmode STDOUT, ':raw';
+binmode STDERR, ':raw';
+my $selected = select STDOUT;
+$| = 1;
+select $selected;
+$SIG{PIPE} = 'IGNORE';
+
+sub diagnostic {
+    my ($status, $message, $usage_hint) = @_;
+    $message = 'unknown failure' unless defined $message && length $message;
+    $message =~ s/\s+\z//;
+    $message =~ s/\s*\n\s*/ /g;
+    print STDERR "$PROGRAM: $message\n";
+    print STDERR "Try '$PROGRAM --help' for usage.\n" if $usage_hint;
+    exit $status;
+}
+
+sub usage_error {
+    diagnostic(2, $_[0], 1);
+}
+
+sub runtime_error {
+    diagnostic(1, $_[0], 0);
+}
+
+sub decode_utf8 {
+    my ($bytes, $source) = @_;
+    return $bytes if utf8::is_utf8($bytes);
+    my $decoded = eval { decode('UTF-8', $bytes, FB_CROAK) };
+    runtime_error("$source is not valid UTF-8: $@") if $@;
+    return $decoded;
+}
+
+sub read_all {
+    my ($handle, $source) = @_;
+    local $/;
+    local $! = 0;
+    my $bytes = <$handle>;
+    runtime_error("cannot read $source: $!") if !defined $bytes && $!;
+    return defined $bytes ? $bytes : '';
+}
+
+sub records_from_bytes {
+    my ($bytes, $source) = @_;
+    my $text = decode_utf8($bytes, $source);
+    return () unless length $text;
+    my @records = split /\n/, $text, -1;
+    pop @records if @records && $records[-1] eq '';
+    s/\r\z// for @records;
+    return @records;
+}
+
+my (@input_files, $strategy, $anychar, $help, $version);
+my $strategy_count = 0;
+my $parse_warning = '';
+my $parser = Getopt::Long::Parser->new(
+    config => [qw(no_auto_abbrev no_ignore_case no_bundling)],
+);
+my $parsed;
+{
+    local $SIG{__WARN__} = sub { $parse_warning .= join '', @_ };
+    $parsed = $parser->getoptionsfromarray(
+        \@ARGV,
+        'input|i=s' => sub { push @input_files, $_[1] },
+        'strategy|s=s' => sub { $strategy_count++; $strategy = $_[1] },
+        'anychar|a' => \$anychar,
+        'help|h' => \$help,
+        'version|V' => \$version,
+    );
+}
+if (!$parsed) {
+    $parse_warning =~ s/\s+\z//;
+    usage_error($parse_warning || 'invalid option');
+}
+if ($help) {
+    print STDOUT $USAGE or runtime_error("cannot write stdout: $!");
+    exit 0;
+}
+
+usage_error('--strategy may be supplied only once') if $strategy_count > 1;
+usage_error('SAMPLE arguments and --input are mutually exclusive')
+    if @ARGV && @input_files;
+usage_error('--input - may be supplied at most once')
+    if grep({ $_ eq '-' } @input_files) > 1;
+$strategy = 'prefix' unless defined $strategy;
+usage_error("invalid strategy '$strategy'; use prefix, both, or suffix")
+    unless $strategy =~ /\A(?:prefix|both|suffix)\z/;
+
+my $dependency_ok = eval {
+    require Regex::PreSuf;
+    1;
+};
+if (!$dependency_ok || !defined $Regex::PreSuf::VERSION
+        || $Regex::PreSuf::VERSION ne '1.17'
+        || !defined &Regex::PreSuf::presuf) {
+    runtime_error(
+        'Regex::PreSuf 1.17 is not installed; run cpanm --local-lib-contained local --installdeps .'
+    );
+}
+if ($version) {
+    print STDOUT "$PROGRAM (Regex::PreSuf 1.17)\n"
+        or runtime_error("cannot write stdout: $!");
+    exit 0;
+}
+
+my @samples;
+if (@ARGV) {
+    for my $index (0 .. $#ARGV) {
+        push @samples, decode_utf8($ARGV[$index], 'SAMPLE ' . ($index + 1));
+    }
+}
+elsif (@input_files) {
+    for my $path (@input_files) {
+        my ($bytes, $source);
+        if ($path eq '-') {
+            $source = 'stdin';
+            $bytes = read_all(\*STDIN, $source);
+        }
+        else {
+            $source = "input file '$path'";
+            open my $handle, '<:raw', $path
+                or runtime_error("cannot open $source: $!");
+            $bytes = read_all($handle, $source);
+            close $handle or runtime_error("cannot close $source: $!");
+        }
+        push @samples, records_from_bytes($bytes, $source);
+    }
+}
+else {
+    usage_error('no samples supplied') if -t STDIN;
+    push @samples, records_from_bytes(read_all(\*STDIN, 'stdin'), 'stdin');
+}
+usage_error('no samples supplied') unless @samples;
+
+my %options;
+$options{suffixes} = 1 if $strategy eq 'both';
+$options{prefixes} = 0 if $strategy eq 'suffix';
+$options{anychar} = 1 if $anychar;
+
+my $body = eval { Regex::PreSuf::presuf(\%options, @samples) };
+runtime_error("inference failed: $@") if $@;
+runtime_error('inference failed: upstream returned an undefined pattern')
+    unless defined $body;
+
+my $compile_error;
+{
+    local $SIG{__WARN__} = sub { die @_ };
+    eval { qr/$body/ };
+    $compile_error = $@;
+}
+runtime_error("inference failed: generated regex did not compile: $compile_error")
+    if $compile_error;
+
+my $output = eval { encode('UTF-8', "$body\n", FB_CROAK) };
+runtime_error("cannot encode inferred pattern: $@") if $@;
+print STDOUT $output or runtime_error("cannot write stdout: $!");
+exit 0;

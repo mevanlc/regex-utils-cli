@@ -810,3 +810,88 @@ with:
 ```sh
 ./test/frak_cli_test.sh
 ```
+
+## Rust setup
+
+The Rust exercises use the exact rustup toolchain declared in `rust-toolchain.toml`.
+Install it once, then prepare the locked dependency graph inside this checkout:
+
+```sh
+rustup toolchain install 1.87.0 --profile minimal --component rustfmt --component clippy
+CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 fetch --locked
+```
+
+Cargo registry data stays beneath ignored `.cargo-home/`, and builds stay beneath
+ignored `target/`. The rustup-managed compiler itself may use the normal rustup home.
+
+## regextrie (Rust)
+
+`bin/regextrie-rust` exercises regextrie 0.1.0 through one trie construction and one
+public query per candidate. The project uses a custom CLI because upstream's binary is
+only a hard-coded demonstration.
+
+```text
+Usage:
+  regextrie-rust matches [OPTIONS] [PATTERN...]
+  regextrie-rust best [OPTIONS] [PATTERN...]
+
+Pattern input:
+  PATTERN...                         Regex/plain patterns as separate arguments
+  -i, --input FILE                  Read LF/CRLF-delimited patterns; use - for stdin
+
+Candidate input:
+  -c, --candidate TEXT              Candidate string; repeatable
+  -C, --candidate-input FILE        Read LF/CRLF-delimited candidates; use - for stdin
+
+Best-match scoring:
+  -s, --scorer MODE                 library-default, shortest, longest, or input-order
+                                     (default: library-default)
+
+General options:
+  -h, --help                        Print help and exit
+  -V, --version                     Print CLI and dependency versions
+```
+
+Choose positional patterns, one pattern file, or implicit pattern stdin. Both commands
+also require repeated candidate arguments or one candidate file. At most one source may
+use stdin. File and stdin sources are strict UTF-8 LF/CRLF records: delimiters are
+removed without otherwise trimming data, a final delimiter adds no phantom record, and
+NUL is preserved. A zero-byte pattern source is a valid empty pattern list, while one
+blank record is one empty pattern. A zero-byte candidate source is an error.
+
+```console
+$ ./bin/regextrie-rust matches 'a.*' 'a[0-9]+b.*' a123bbb \
+    --candidate a123bbb --candidate xa123bbb
+{"candidate":"a123bbb","matched":true,"matches":["a.*","a123bbb","a[0-9]+b.*"]}
+{"candidate":"xa123bbb","matched":false,"matches":[]}
+
+$ ./bin/regextrie-rust best 'a.*' 'a[0-9]+b.*' a123bbb --candidate a123bbb
+{"candidate":"a123bbb","matched":true,"best":"a123bbb","scorer":"library-default"}
+```
+
+`matches` calls `find_matches()` and sorts only its returned strings for deterministic
+JSON Lines; duplicate regex results remain duplicated. `best` calls
+`find_best_match()`. Its default scorer prioritizes a matching plain string and then a
+shorter regex. The custom modes score the shortest, longest, or first input pattern.
+Equal-score best matches remain upstream-order-dependent except in `input-order` mode.
+
+The crate's regex classifier and full-match check have important limitations. It
+accepts a regex only when the first leftmost match spans the complete candidate, so
+`(a|aaa)` does not match `aaa`, while `(aaa|a)` does. Operators `^`, `$`, and `|` are
+not classifier metacharacters, making `^foo$` and `foo|bar` plain strings. Regex escapes
+such as `\b` and `\s` can be indexed as literal prefix characters and miss otherwise
+matching candidates. These behaviors are preserved rather than corrected by another
+regex engine.
+
+The command does not infer, combine, or optimize regexes, generate matching text, or
+expose spans and captures. Trie construction may use Rayon threads and is not a CPU,
+memory, DFA-size, or input-size sandbox.
+
+Validate the custom command with:
+
+```sh
+CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 check --locked --all-targets
+CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 nextest run --locked
+CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 fmt --check
+CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 clippy --locked --all-targets -- -D warnings
+```

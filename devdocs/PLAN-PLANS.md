@@ -89,7 +89,7 @@ names.
 
 - [x] `devdocs/regextrie-c/PLAN.md` —
   [RegexTrie](https://github.com/ikeofilic1/RegexTrie)
-- [ ] `devdocs/tre/PLAN.md` —
+- [x] `devdocs/tre/PLAN.md` —
   [TRE](https://github.com/laurikari/tre)
 - [ ] `devdocs/hyperscan/PLAN.md` —
   [Intel Hyperscan](https://github.com/intel/hyperscan), considering the

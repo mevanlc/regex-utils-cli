@@ -640,3 +640,84 @@ Inputs are inserted as raw regex syntax, not escaped literals: `a.b` can match `
 defective iterator or `discard()` behavior. It also does not optimize existing regexes,
 generate matching text, add flags, provide safe-literal inference, or isolate resource
 use and regex backtracking.
+
+## retrie
+
+`bin/retrie` exercises the public APIs in the published retrie 0.3.1 wheel. Unlike
+triegex, retrie treats keys as literals and escapes regex syntax before producing a
+deterministic, sorted Python regex.
+
+```text
+Usage:
+  retrie build [OPTIONS] [KEY...]
+  retrie check MODE [OPTIONS] [KEY...]
+  retrie filter MODE [OPTIONS] [KEY...]
+  retrie cleanse MODE [OPTIONS] [KEY...]
+  retrie replace [OPTIONS]
+
+Modes for check/filter/cleanse:
+  blacklist | whitelist
+
+Key and candidate input:
+  -i, --input FILE                 Read LF/CRLF-delimited keys; use - for stdin
+  -c, --candidate TEXT             Candidate text; repeatable
+  -C, --candidate-input FILE       Read LF/CRLF-delimited candidates; use - for stdin
+
+Whole-text and replacement input:
+  -t, --text TEXT                  Use one complete text argument
+  -T, --text-input FILE            Read one complete text; use - for stdin
+  -r, --replacement OLD NEW        Add one replacement pair; repeatable
+  -R, --replacement-input FILE     Read JSON Lines pairs; use - for stdin
+  -n, --count NUMBER               Maximum replacements; 0 means all; default 0
+
+Matching options:
+  -s, --substring                  Match inside words instead of at word boundaries
+  -S, --case-sensitive             Disable default case-insensitive matching
+```
+
+Key and candidate files use strict-UTF-8 record input. `cleanse` and `replace` instead
+read one complete text without trimming or newline normalization. Replacement files
+are JSON Lines objects containing exactly two string properties, `old` and `new`, so
+mapping strings can contain newlines, NUL, and other controls. At most one source can
+consume stdin.
+
+```console
+$ uv run --frozen -- ./bin/retrie build abc foo abs
+(?:ab[cs]|foo)
+
+$ uv run --frozen -- ./bin/retrie check blacklist foo \
+    --candidate foobar --candidate 'a foo bar'
+{"candidate":"foobar","blacklisted":false}
+{"candidate":"a foo bar","blacklisted":true}
+
+$ printf 'good\nABC\nfoobar\n' | \
+    uv run --frozen -- ./bin/retrie filter whitelist abc foo abs --candidate-input -
+{"candidate":"ABC"}
+
+$ uv run --frozen -- ./bin/retrie cleanse blacklist abc foo abs \
+    --text 'good ABC foobar'
+good  foobar
+
+$ uv run --frozen -- ./bin/retrie replace \
+    --replacement abc new1 --replacement foo new2 --replacement abs new3 \
+    --text 'ABS ...foo... foobar'
+new3 ...new2... foobar
+```
+
+`build` calls `Trie.pattern()` and appends one newline. A zero-key or single-empty-key
+trie renders an empty pattern; empty plus `foo` renders `(?:foo)?`. `check` calls the
+mode-specific membership method, and `filter` consumes the corresponding upstream
+iterator. Blacklists retain unlisted candidates, while whitelists retain listed ones.
+
+Matching is case-insensitive Unicode search at word boundaries by default. `--substring`
+removes the boundaries and `--case-sensitive` passes no regex flags. Blacklist cleansing
+removes matches; whitelist cleansing concatenates only matches, discarding separators.
+These raw text operations add no final newline.
+
+Replacement uses one `Replacer` and one `replace()` call, so mappings are applied as a
+single regex substitution rather than sequential `str.replace` calls. Distinct default-
+mode keys that collide after lowercasing retain upstream's ambiguous-mapping error.
+Empty checklists also retain upstream's `\b\b` behavior and can list word-containing
+text. Deep keys can exhaust Python recursion. The wrapper does not optimize existing
+regexes, accept negative examples, generate matching text, or isolate recursion,
+backtracking, CPU, or memory use.

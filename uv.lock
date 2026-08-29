@@ -419,12 +419,14 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "regexfinder" },
+    { name = "retrie" },
     { name = "triegex" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "regexfinder", git = "https://github.com/mevanlc/regexfinder.git?rev=88b50c683f77c68ff232f75e111ea6650940c4b5" },
+    { name = "retrie", specifier = "==0.3.1" },
     { name = "triegex", git = "https://github.com/ZhukovAlexander/triegex.git?rev=85a25240b8821c2da257e6f6b784023e56a5b680" },
 ]
 
@@ -440,6 +442,15 @@ dependencies = [
     { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[[package]]
+name = "retrie"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/51/bb/09905b04e64a992284d2e1b907be2f8ef293a3a0855a7db6948235493380/retrie-0.3.1.tar.gz", hash = "sha256:a18e7a3a75b2671e72a6ab5f76116ce8c2a7dabc61d683d796307d0909c122e3", size = 10409, upload-time = "2024-02-22T10:05:30.536Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/1a/0ab5362044d27c3639befa0ffb1c37bc6f1df0034cb7bd705aa4a8882264/retrie-0.3.1-py2.py3-none-any.whl", hash = "sha256:cb67a394f93e66d3ee35592c0c65192f8c1d7f36e6a98e73306e439e97bf8d9d", size = 9466, upload-time = "2024-02-22T10:05:28.149Z" },
 ]
 
 [[package]]

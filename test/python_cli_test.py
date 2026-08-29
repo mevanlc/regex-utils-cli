@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import errno
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
-
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 
-from python_cli import CliError, split_records, write_stdout  # noqa: E402
+from python_cli import CliError, split_records, write_stdout
 
 
 class PythonCliHelpersTest(unittest.TestCase):
@@ -32,9 +31,11 @@ class PythonCliHelpersTest(unittest.TestCase):
             write_stdout("complete output\n")
 
     def test_other_stdout_failures_are_runtime_errors(self) -> None:
-        with patch("python_cli.os.write", side_effect=OSError(errno.EIO, "injected")):
-            with self.assertRaises(CliError) as raised:
-                write_stdout("complete output\n")
+        with (
+            patch("python_cli.os.write", side_effect=OSError(errno.EIO, "injected")),
+            self.assertRaises(CliError) as raised,
+        ):
+            write_stdout("complete output\n")
         self.assertEqual(raised.exception.status, 1)
         self.assertIn("cannot write stdout", str(raised.exception))
 

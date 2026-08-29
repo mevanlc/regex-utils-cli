@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import MutableSet
+import functools
 import importlib
-from importlib.machinery import SourceFileLoader
 import importlib.util
 import json
+import operator
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-
+from collections.abc import MutableSet
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "bin" / "triegex"
@@ -32,8 +33,7 @@ def run(*arguments: str, input: bytes | None = None, cwd: Path | None = None,
         input=input,
         cwd=cwd or ROOT,
         env=merged_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=timeout,
         check=False,
     )
@@ -129,7 +129,7 @@ class TriegexCliTest(unittest.TestCase):
         candidates = ["foo", "food", "", "foo!", "(", "("]
         result = run(
             "contains", "foo", "foo!", "(",
-            *sum((["--candidate", candidate] for candidate in candidates), []),
+            *functools.reduce(operator.iadd, (["--candidate", candidate] for candidate in candidates), []),
         )
         self.assert_success(result)
         self.assertEqual(json_lines(result.stdout), [
@@ -256,7 +256,7 @@ class TriegexCliTest(unittest.TestCase):
 
         direct = subprocess.run(
             [sys.executable, "-c", "import triegex"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            capture_output=True, check=False,
         )
         self.assertNotEqual(direct.returncode, 0)
         self.assertIn(b"MutableSet", direct.stderr)
@@ -279,12 +279,12 @@ class TriegexCliTest(unittest.TestCase):
             shutil.copy2(ROOT / "lib" / "python_cli.py", root / "lib" / "python_cli.py")
             help_result = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "triegex", "--help"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                capture_output=True, check=False,
             )
             self.assertEqual(help_result.returncode, 0)
             version = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "triegex", "--version"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                capture_output=True, check=False,
             )
             self.assertEqual(version.returncode, 1)
             self.assertEqual(version.stdout, b"")
@@ -323,7 +323,7 @@ class TriegexCliTest(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "triegex", "contains", "zebra", "apple",
                  "--candidate", "yes", "--candidate", "no"],
-                env={**os.environ, **environment}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                env={**os.environ, **environment}, capture_output=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls.read_text().splitlines(), [

@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import importlib.metadata
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from python_cli import (
+    StoreOnce,
+    StoreTrueOnce,
+    StrictArgumentParser,
+    compact_json,
+    read_records,
+    read_text,
+    run_cli,
+    runtime_error,
+    stdin_is_terminal,
+    usage_error,
+    write_stdout,
+)
+
+PROGRAM = "retrie"
+VERSION = "0.3.1"
+BOOTSTRAP_ERROR = "pinned retrie 0.3.1 is unavailable; run uv sync --frozen"
+COMMANDS = {"build", "check", "filter", "cleanse", "replace"}
+MODES = {"blacklist", "whitelist"}
+
+TOP_HELP = """Usage:
+  retrie build [OPTIONS] [KEY...]
+  retrie check MODE [OPTIONS] [KEY...]
+  retrie filter MODE [OPTIONS] [KEY...]
+  retrie cleanse MODE [OPTIONS] [KEY...]
+  retrie replace [OPTIONS]
+
+Commands:
+  build                           Render a literal trie-factored regex
+  check                           Check candidates against a blacklist or whitelist
+  filter                          Filter an ordered candidate sequence
+  cleanse                         Cleanse one complete text
+  replace                         Apply one-pass mapping replacement
+
+General options:
+  -h, --help                      Print help and exit
+  -V, --version                   Print dependency version
+"""
+
+
+def command_help(command: str) -> str:
+    mode = "" if command in {"build", "replace"} else """
+Mode:
+  blacklist | whitelist           Select checklist behavior
+"""
+    keys = "" if command == "replace" else """
+Key input:
+  KEY...                           Keys as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited keys; use - for stdin
+"""
+    candidates = "" if command not in {"check", "filter"} else """
+Candidate input:
+  -c, --candidate TEXT            Candidate text; repeatable
+  -C, --candidate-input FILE      Read LF/CRLF-delimited candidates; use - for stdin
+"""
+    text = "" if command not in {"cleanse", "replace"} else """
+Whole-text input:
+  -t, --text TEXT                 Use one complete text argument
+  -T, --text-input FILE           Read one complete text; use - for stdin
+"""
+    replacements = "" if command != "replace" else """
+Replacement input:
+  -r, --replacement OLD NEW       Add one replacement pair; repeatable
+  -R, --replacement-input FILE    Read JSON Lines pairs; use - for stdin
+  -n, --count NUMBER              Maximum replacements; 0 means all; default 0
+"""
+    matching = "" if command == "build" else """
+Matching options:
+  -s, --substring                 Match inside words instead of at word boundaries
+  -S, --case-sensitive            Disable default case-insensitive matching
+"""
+    mode_operand = " MODE" if mode else ""
+    key_operands = " [KEY...]" if keys else ""
+    return f"""Usage: retrie {command}{mode_operand} [OPTIONS]{key_operands}
+{mode}{keys}{candidates}{text}{replacements}{matching}
+General options:
+  -h, --help                      Print help and exit
+"""
+
+
+def dependency():
+    try:
+        if importlib.metadata.version("retrie") != VERSION:
+            raise ValueError("wrong version")
+        from retrie.retrie import Blacklist, Replacer, Whitelist
+        from retrie.trie import Trie
+
+        if not all(callable(value) for value in (Trie, Blacklist, Whitelist, Replacer)):
+            raise TypeError("invalid API")
+        return Trie, Blacklist, Whitelist, Replacer
+    except Exception:  # noqa: BLE001 - dependency validation must fail closed.
+        runtime_error(BOOTSTRAP_ERROR)
+
+
+def add_matching_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-s", "--substring", action=StoreTrueOnce, default=False)
+    parser.add_argument("-S", "--case-sensitive", action=StoreTrueOnce, default=False)
+
+
+def parse_command(command: str, arguments: list[str]):
+    parser = StrictArgumentParser(prog=f"{PROGRAM} {command}")
+    if command != "replace":
+        if command != "build":
+            parser.add_argument("mode", nargs="?")
+        parser.add_argument("-i", "--input", action=StoreOnce)
+        if command in {"check", "filter"}:
+            parser.add_argument("-c", "--candidate", action="append")
+            parser.add_argument("-C", "--candidate-input", action=StoreOnce)
+        if command == "cleanse":
+            parser.add_argument("-t", "--text", action=StoreOnce)
+            parser.add_argument("-T", "--text-input", action=StoreOnce)
+        if command != "build":
+            add_matching_options(parser)
+        parser.add_argument("keys", nargs="*")
+    else:
+        parser.add_argument("-r", "--replacement", action="append", nargs=2)
+        parser.add_argument("-R", "--replacement-input", action=StoreOnce)
+        parser.add_argument("-t", "--text", action=StoreOnce)
+        parser.add_argument("-T", "--text-input", action=StoreOnce)
+        parser.add_argument("-n", "--count", action=StoreOnce, default="0")
+        add_matching_options(parser)
+    values = parser.parse_intermixed_args(arguments)
+    if command not in {"build", "replace"}:
+        if values.mode is None:
+            usage_error("missing MODE")
+        if values.mode not in MODES:
+            usage_error(f"unknown mode '{values.mode}'")
+    if command == "replace":
+        if not re.fullmatch(r"\+?[0-9]+", values.count, flags=re.ASCII):
+            usage_error("--count must be a non-negative decimal integer")
+        values.count = int(values.count, 10)
+    return values
+
+
+def keys_use_stdin(values: argparse.Namespace) -> bool:
+    return not values.keys and (values.input is None or values.input == "-")
+
+
+def collect_keys(values: argparse.Namespace) -> list[str]:
+    if values.keys and values.input is not None:
+        usage_error("KEY operands and --input are mutually exclusive")
+    if values.keys:
+        return values.keys
+    if values.input is not None:
+        return read_records(
+            values.input,
+            "stdin" if values.input == "-" else f"input file '{values.input}'",
+        )
+    if stdin_is_terminal():
+        usage_error("no keys supplied")
+    return read_records("-", "stdin")
+
+
+def candidate_source(values: argparse.Namespace) -> tuple[list[str], bool]:
+    arguments = values.candidate
+    pathname = values.candidate_input
+    families = (arguments is not None) + (pathname is not None)
+    if families != 1:
+        usage_error("requires exactly one candidate source")
+    if arguments is not None:
+        return arguments, False
+    candidates = read_records(
+        pathname,
+        "stdin" if pathname == "-" else f"candidate file '{pathname}'",
+    )
+    if not candidates:
+        runtime_error("candidate input contains no records")
+    return candidates, pathname == "-"
+
+
+def text_uses_stdin(values: argparse.Namespace) -> bool:
+    return values.text is None and (values.text_input is None or values.text_input == "-")
+
+
+def collect_text(values: argparse.Namespace) -> str:
+    families = (values.text is not None) + (values.text_input is not None)
+    if families > 1:
+        usage_error("--text and --text-input are mutually exclusive")
+    if values.text is not None:
+        return values.text
+    if values.text_input is not None:
+        return read_text(
+            values.text_input,
+            "stdin" if values.text_input == "-" else f"text file '{values.text_input}'",
+        )
+    if stdin_is_terminal():
+        usage_error("no text supplied")
+    return read_text("-", "stdin")
+
+
+def parse_replacement_records(records: list[str]) -> list[tuple[str, str]]:
+    if not records:
+        runtime_error("replacement input contains no records")
+    pairs = []
+    for index, record in enumerate(records, start=1):
+        try:
+            value = json.loads(record)
+        except json.JSONDecodeError as error:
+            runtime_error(f"replacement input line {index} is invalid JSON: {error.msg}")
+        if not isinstance(value, dict) or set(value) != {"old", "new"}:
+            runtime_error(f"replacement input line {index} must contain exactly old and new")
+        if not isinstance(value["old"], str) or not isinstance(value["new"], str):
+            runtime_error(f"replacement input line {index} old and new must be strings")
+        pairs.append((value["old"], value["new"]))
+    return pairs
+
+
+def replacement_source(values: argparse.Namespace) -> tuple[list[tuple[str, str]], bool]:
+    arguments = values.replacement
+    pathname = values.replacement_input
+    families = (arguments is not None) + (pathname is not None)
+    if families != 1:
+        usage_error("requires exactly one replacement source")
+    if arguments is not None:
+        pairs = [tuple(pair) for pair in arguments]
+        uses_stdin = False
+    else:
+        records = read_records(
+            pathname,
+            "stdin" if pathname == "-" else f"replacement file '{pathname}'",
+        )
+        pairs = parse_replacement_records(records)
+        uses_stdin = pathname == "-"
+    seen: set[str] = set()
+    for old, _new in pairs:
+        if old in seen:
+            runtime_error(f"duplicate replacement key: {old!r}")
+        seen.add(old)
+    return pairs, uses_stdin
+
+
+def matching_arguments(values: argparse.Namespace) -> dict[str, object]:
+    options: dict[str, object] = {}
+    if values.substring:
+        options["match_substrings"] = True
+    if values.case_sensitive:
+        options["re_flags"] = None
+    return options
+
+
+def checklist(mode: str, keys: list[str], values: argparse.Namespace,
+              Blacklist: object, Whitelist: object):
+    constructor = Blacklist if mode == "blacklist" else Whitelist
+    return constructor(keys, **matching_arguments(values))
+
+
+def operate_keys(command: str, values: argparse.Namespace) -> str:
+    Trie, Blacklist, Whitelist, _ = dependency()
+    candidates: list[str] | None = None
+    candidates_stdin = command in {"check", "filter"} and values.candidate_input == "-"
+    text_stdin = command == "cleanse" and text_uses_stdin(values)
+    if sum((keys_use_stdin(values), candidates_stdin, text_stdin)) > 1:
+        usage_error("at most one input source may read stdin")
+    if command in {"check", "filter"}:
+        candidates, _ = candidate_source(values)
+    keys = collect_keys(values)
+    text = collect_text(values) if command == "cleanse" else None
+    try:
+        if command == "build":
+            return Trie(*keys).pattern() + "\n"
+        selected = checklist(values.mode, keys, values, Blacklist, Whitelist)
+        if command == "check":
+            method_name = "is_blacklisted" if values.mode == "blacklist" else "is_whitelisted"
+            method = getattr(selected, method_name)
+            property_name = "blacklisted" if values.mode == "blacklist" else "whitelisted"
+            return "\n".join(
+                compact_json({"candidate": candidate, property_name: bool(method(candidate))})
+                for candidate in candidates
+            ) + "\n"
+        if command == "filter":
+            retained = selected.filter(candidates)
+            output = "\n".join(compact_json({"candidate": candidate}) for candidate in retained)
+            return output + "\n" if output else ""
+        return selected.cleanse_text(text)
+    except Exception as error:  # noqa: BLE001 - normalize arbitrary upstream failures.
+        runtime_error(f"{command} failed: {error}")
+
+
+def operate_replace(values: argparse.Namespace) -> str:
+    _, _, _, Replacer = dependency()
+    replacements_stdin = values.replacement_input == "-"
+    if replacements_stdin and text_uses_stdin(values):
+        usage_error("at most one input source may read stdin")
+    pairs, _ = replacement_source(values)
+    text = collect_text(values)
+    mapping = dict(pairs)
+    try:
+        replacer = Replacer(mapping, **matching_arguments(values))
+        return replacer.replace(text, count=values.count)
+    except Exception as error:  # noqa: BLE001 - normalize arbitrary upstream failures.
+        runtime_error(f"replace failed: {error}")
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    if arguments and arguments[0] in {"-h", "--help"}:
+        if len(arguments) != 1:
+            usage_error("--help accepts no command or operands")
+        write_stdout(TOP_HELP)
+        return
+    if arguments and arguments[0] in {"-V", "--version"}:
+        if len(arguments) != 1:
+            usage_error("--version accepts no command or operands")
+        dependency()
+        write_stdout(f"{PROGRAM} {VERSION}\n")
+        return
+    if not arguments:
+        usage_error("missing command")
+    command = arguments.pop(0)
+    if command not in COMMANDS:
+        usage_error(f"unknown command '{command}'")
+    if arguments and arguments[0] in {"-h", "--help"}:
+        if len(arguments) != 1:
+            usage_error("--help accepts no other options or operands")
+        write_stdout(command_help(command))
+        return
+    values = parse_command(command, arguments)
+    output = operate_replace(values) if command == "replace" else operate_keys(command, values)
+    write_stdout(output)
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_cli(PROGRAM, main))

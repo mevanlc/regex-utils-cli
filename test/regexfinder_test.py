@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "bin" / "regexfinder"
@@ -28,8 +27,7 @@ def run(*arguments: str, input: bytes | None = None, cwd: Path | None = None,
         input=input,
         cwd=cwd or ROOT,
         env=merged_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=timeout,
         check=False,
     )
@@ -213,12 +211,12 @@ class RegexfinderCliTest(unittest.TestCase):
             shutil.copy2(ROOT / "lib" / "python_cli.py", root / "lib" / "python_cli.py")
             help_result = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "regexfinder", "--help"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                capture_output=True, check=False,
             )
             self.assertEqual(help_result.returncode, 0)
             version = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "regexfinder", "--version"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                capture_output=True, check=False,
             )
             self.assertEqual(version.returncode, 1)
             self.assertEqual(version.stdout, b"")
@@ -269,14 +267,14 @@ class RegexfinderCliTest(unittest.TestCase):
             environment = {"PYTHONPATH": os.fspath(site), "REGEXFINDER_CALLS": os.fspath(calls)}
             result = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "regexfinder", "optimize", "--alpha", "2", "before"],
-                env={**os.environ, **environment}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                env={**os.environ, **environment}, capture_output=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls.read_text().splitlines(), ["GRAPH:before:2.0", "partition", "reducePhi"])
             calls.unlink()
             result = subprocess.run(
                 [sys.executable, "-S", root / "bin" / "regexfinder", "search", "--boolean", "x", "x", "no"],
-                env={**os.environ, **environment}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                env={**os.environ, **environment}, capture_output=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls.read_text().splitlines(), ["NODE:x", "match:x:True", "match:no:True"])

@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from python_cli import (  # noqa: E402
+from python_cli import (
     CliError,
     StoreOnce,
     StoreTrueOnce,
@@ -91,7 +91,7 @@ def dependency():
         if not callable(GRAPH) or not callable(NODE):
             raise TypeError("invalid API")
         return GRAPH, NODE
-    except Exception:
+    except Exception:  # noqa: BLE001 - dependency validation must fail closed.
         runtime_error(BOOTSTRAP_ERROR)
 
 
@@ -118,7 +118,7 @@ def parse_command(command: str, arguments: list[str]):
         parser.add_argument("-b", "--boolean", action=StoreTrueOnce, default=False)
         parser.add_argument("pattern", nargs="?")
         parser.add_argument("texts", nargs="*")
-    values = parser.parse_args(arguments)
+    values = parser.parse_intermixed_args(arguments)
     if values.pattern is None:
         usage_error("missing PATTERN")
     if command in {"analyze", "optimize"}:
@@ -162,7 +162,7 @@ def graph_operation(command: str, pattern: str, alpha: float, verbose: bool = Fa
                 after = snapshot(graph)
     except CliError:
         raise
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - normalize arbitrary upstream failures.
         runtime_error(f"{command} failed: {error}")
 
     if command == "analyze":
@@ -224,7 +224,7 @@ def search(pattern: str, candidates: list[str], boolean: bool) -> str:
                     }
                 )
             records.append(compact_json({"text": text, "matched": bool(matches), "matches": matches}))
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - normalize arbitrary upstream failures.
         runtime_error(f"search failed: {error}")
     return "\n".join(records) + "\n"
 

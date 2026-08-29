@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import argparse
 import collections
-from collections.abc import MutableSet
 import importlib
 import importlib.metadata
 import json
-from pathlib import Path
 import re
 import sys
+from collections.abc import MutableSet
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from python_cli import (  # noqa: E402
+from python_cli import (
     StoreOnce,
     StoreTrueOnce,
     StrictArgumentParser,
@@ -90,7 +90,7 @@ def dependency():
             raise TypeError("invalid API")
         Triegex()
         return Triegex
-    except Exception:
+    except Exception:  # noqa: BLE001 - dependency validation must fail closed.
         runtime_error(BOOTSTRAP_ERROR)
     finally:
         if prior_exists:
@@ -108,7 +108,7 @@ def parse_command(command: str, arguments: list[str]):
     if command == "match":
         parser.add_argument("-b", "--boolean", action=StoreTrueOnce, default=False)
     parser.add_argument("words", nargs="*")
-    return parser.parse_args(arguments)
+    return parser.parse_intermixed_args(arguments)
 
 
 def collect_words(values: argparse.Namespace) -> tuple[list[str], bool]:
@@ -181,7 +181,7 @@ def operate(command: str, words: list[str], candidates: list[str] | None,
                     "matches": matches,
                 }))
         return "\n".join(records) + "\n"
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - normalize arbitrary upstream failures.
         runtime_error(f"{command} failed: {error}")
 
 

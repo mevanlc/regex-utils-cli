@@ -101,8 +101,7 @@ def split_records(text: str) -> list[str]:
         records.pop()
     delimited_count = len(records) if ends_with_lf else max(0, len(records) - 1)
     for index in range(delimited_count):
-        if records[index].endswith("\r"):
-            records[index] = records[index][:-1]
+        records[index] = records[index].removesuffix("\r")
     return records
 
 
@@ -154,6 +153,6 @@ def run_cli(program: str, main: object) -> int:
         if error.usage_hint:
             sys.stderr.write(f"Try '{program} --help' for usage.\n")
         return error.status
-    except Exception as error:  # Defensive process boundary; never expose tracebacks.
+    except Exception as error:  # noqa: BLE001 - defensive process boundary.
         sys.stderr.write(f"{program}: {clean_message(error)}\n")
         return 1

@@ -210,3 +210,32 @@ stable.
    executable acceptance tests.
 5. Confirm the combined plans require no global package installations and can be
    implemented incrementally from a clean checkout.
+
+## Reconciled Implementation Sequence
+
+The cross-plan reconciliation pass completed on August 29, 2026 and established this
+dependency-safe order:
+
+1. Perl: Regexp::Optimizer creates `cpanfile`, `local/`, `bin/`, `t/`, and README;
+   Regexp::Assemble, Regex::PreSuf, and Regexp::Trie extend those shared files.
+2. Node: regexp-tree creates `package.json`, `package-lock.json`, and `test/`; the three
+   custom Node CLIs extend the same ESM project and lock.
+3. Python: regexfinder creates `pyproject.toml` and `uv.lock`; triegex and retrie extend
+   that one uv environment and retain both immutable Git pins.
+4. JVM: Frak owns `deps.edn`, the project-local `.deps/` tree, and its two tooling
+   scripts without adding a wrapper executable.
+5. Rust: regextrie-rust creates the root Cargo package; native grex reuses its toolchain
+   and Cargo home while remaining a separately installed upstream command.
+6. Native: RegexTrie creates the root CMake project, TRE extends its default Debug build,
+   and Hyperscan adds an opt-in C++ target in a separate Conan-backed build tree.
+
+Executable names are unique. Ecosystem manifests and lockfiles have one owner and are
+extended additively. Perl uses `t/`, Node/Python/JVM use type-distinct files in `test/`,
+and Rust/native CMake use type-distinct files in `tests/`, so their aggregate runners do
+not consume another ecosystem's tests.
+
+The native targets are gated by `REGEX_UTILS_BUILD_REGEXTRIE_C`,
+`REGEX_UTILS_BUILD_TRE`, and `REGEX_UTILS_BUILD_HYPERSCAN`. The first two default on in
+`build/native`; Hyperscan defaults off and uses `build/hyperscan` with the earlier targets
+off. This preserves the direct Debug CMake workflow and TRE's Autotools prerequisites
+without making either depend on Conan, while the x86-only Hyperscan graph remains isolated.

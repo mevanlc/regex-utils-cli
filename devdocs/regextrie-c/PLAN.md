@@ -130,6 +130,8 @@ include(FetchContent)
 
 option(REGEX_UTILS_ENABLE_SANITIZERS
        "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(REGEX_UTILS_BUILD_REGEXTRIE_C
+       "Build the RegexTrie C exercise" ON)
 
 FetchContent_Declare(
   regextrie_upstream
@@ -177,6 +179,12 @@ add_test(
              "$<TARGET_FILE:regextrie-c>"
 )
 ```
+
+Guard the `FetchContent_Declare` call, upstream library, project executable, library
+test, and both CTest registrations with `if(REGEX_UTILS_BUILD_REGEXTRIE_C)`. The option
+defaults on, so this plan's documented native build is unchanged. A later dependency-
+isolated native build may set it off; doing so must avoid fetching or configuring the
+unlicensed upstream source and must not create either RegexTrie target.
 
 Set every configuration-specific runtime output property to the same
 `${CMAKE_BINARY_DIR}/bin` path so single- and multi-config generators agree. For
@@ -478,6 +486,8 @@ case aliasing, and status 0 after an unreadable file; do not use it as the proje
 
 - The project fetches exactly commit `c35e88931f64` by verified archive hash and builds
   it locally as C11 through the shared root CMake project.
+- `REGEX_UTILS_BUILD_REGEXTRIE_C=OFF` omits the source fetch and every RegexTrie target,
+  allowing dependency-isolated native builds without acquiring the unlicensed source.
 - CMake is the only added build/dependency mechanism; no Conan manifest, recipe,
   profile, lockfile, package cache, or global RegexTrie installation is introduced.
 - `bin/regextrie-c` launches only the custom project-built executable and exercises

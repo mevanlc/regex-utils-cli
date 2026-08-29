@@ -133,7 +133,7 @@ Add these dependency files:
 
 - `conanfile.py`: root consumer recipe requiring exactly `hyperscan/5.4.2.1`, generating
   `CMakeDeps` and `CMakeToolchain`, and placing generated files in
-  `build/native/conan/`.
+  `build/hyperscan/conan/`.
 - `conan.lock`: checked-in lockfile covering the local Hyperscan recipe and every Conan
   Center recipe revision selected for its dependency graph.
 - `conan/profiles/hyperscan-x86_64`: host profile which `include(default)`, overrides
@@ -242,34 +242,40 @@ lockfile implicitly during an ordinary build.
 
 For the sanitizer graph, use the same locked recipe revisions but add
 `-o:h 'hyperscan/*:sanitizers=True'` to both `conan create` and `conan install`, and place
-consumer generators under `build/native-sanitize/conan/`. Do not reuse normal and
+consumer generators under `build/hyperscan-sanitize/conan/`. Do not reuse normal and
 sanitized package binaries.
 
 ### Shared CMake integration
 
 Extend the root `CMakeLists.txt` introduced by the RegexTrie C plan and already extended
-by TRE. Change the root project languages from `C` to `C CXX`, retain CMake 3.24 as the
-project minimum, and add:
+by TRE. Retain CMake 3.24 and the root project's unconditional C language. Add a gated
+Hyperscan target so ordinary RegexTrie/TRE builds do not require Conan, OpenSSL, a C++
+compiler, or an x86_64 host package:
 
 ```cmake
-find_package(hyperscan CONFIG REQUIRED)
+option(REGEX_UTILS_BUILD_HYPERSCAN "Build the Intel Hyperscan exercise" OFF)
 
-add_executable(hyperscan native/hyperscan_cli.cpp)
-target_link_libraries(hyperscan PRIVATE hyperscan::hs)
-target_compile_features(hyperscan PRIVATE cxx_std_11)
-set_target_properties(hyperscan PROPERTIES
-  CXX_EXTENSIONS OFF
-  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-)
-target_compile_definitions(hyperscan PRIVATE
-  REGEX_UTILS_HYPERSCAN_SOURCE_TAG="v5.4.2.1"
-)
+if(REGEX_UTILS_BUILD_HYPERSCAN)
+  enable_language(CXX)
+  find_package(hyperscan CONFIG REQUIRED)
 
-add_test(
-  NAME hyperscan-cli
-  COMMAND sh "${CMAKE_SOURCE_DIR}/tests/hyperscan_cli_test.sh"
-             "$<TARGET_FILE:hyperscan>"
-)
+  add_executable(hyperscan native/hyperscan_cli.cpp)
+  target_link_libraries(hyperscan PRIVATE hyperscan::hs)
+  target_compile_features(hyperscan PRIVATE cxx_std_11)
+  set_target_properties(hyperscan PROPERTIES
+    CXX_EXTENSIONS OFF
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  )
+  target_compile_definitions(hyperscan PRIVATE
+    REGEX_UTILS_HYPERSCAN_SOURCE_TAG="v5.4.2.1"
+  )
+
+  add_test(
+    NAME hyperscan-cli
+    COMMAND sh "${CMAKE_SOURCE_DIR}/tests/hyperscan_cli_test.sh"
+               "$<TARGET_FILE:hyperscan>"
+  )
+endif()
 ```
 
 Add compiler-specific warning flags to the project target: `/W4 /WX` for MSVC in theory,
@@ -281,24 +287,29 @@ the project target and require the sanitizer-built Conan package.
 Configure the normal consumer after `conan install` with:
 
 ```sh
-cmake -S . -B build/native \
+cmake -S . -B build/hyperscan \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_TOOLCHAIN_FILE=build/native/conan/conan_toolchain.cmake \
+  -DCMAKE_TOOLCHAIN_FILE=build/hyperscan/conan/conan_toolchain.cmake \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-  -DREGEX_UTILS_ENABLE_SANITIZERS=OFF
-cmake --build build/native --parallel
-ctest --test-dir build/native --output-on-failure
+  -DREGEX_UTILS_ENABLE_SANITIZERS=OFF \
+  -DREGEX_UTILS_BUILD_REGEXTRIE_C=OFF \
+  -DREGEX_UTILS_BUILD_TRE=OFF \
+  -DREGEX_UTILS_BUILD_HYPERSCAN=ON
+cmake --build build/hyperscan --parallel
+ctest --test-dir build/hyperscan --output-on-failure
 ```
 
 The root consumer recipe's layout must make the toolchain path above exact. Conan manages
-only Hyperscan and its transitive dependencies; the same root CMake invocation continues
-to build the C RegexTrie target and orchestrate TRE. Do not convert those dependency-light
-plans to Conan merely because a root consumer now exists.
+only Hyperscan and its transitive dependencies. The dedicated build tree disables the
+RegexTrie and TRE blocks before their source or tool preflights, while still reusing the
+one root CMake project. Their established `build/native` Debug build remains independent
+of Conan and continues to exercise both earlier native plans. Do not convert those
+dependency-light plans to Conan merely because a root consumer now exists.
 
 ### Platform gate and launcher
 
 Add `bin/hyperscan` as a small POSIX launcher. It must resolve its own repository root,
-preserve the caller's working directory, and use only `build/native/bin/hyperscan`. It
+preserve the caller's working directory, and use only `build/hyperscan/bin/hyperscan`. It
 must not search `PATH`, invoke a system Hyperscan tool, or rebuild automatically.
 
 - On `x86_64` Linux or macOS, `exec` the built command directly.
@@ -569,7 +580,7 @@ The ellipses describe platform-dependent JSON numbers and are not literal comman
 Run the exact clean-checkout bootstrap and normal CMake commands above. Assert:
 
 - all Conan state is under `.conan2/`, all generated CMake files are under
-  `build/native/conan/`, and no global Conan package or system Hyperscan is used;
+  `build/hyperscan/conan/`, and no global Conan package or system Hyperscan is used;
 - the lockfile resolves the exact local recipe revision plus Boost 1.83.0, OpenSSL 3.5.8,
   and Ragel 6.10 recipe revisions; ordinary install refuses silent lock changes;
 - the downloaded Hyperscan archive passes the recorded SHA-256 and its Git tree matches
@@ -580,7 +591,7 @@ Run the exact clean-checkout bootstrap and normal CMake commands above. Assert:
   static linking, and no unreviewed source patch;
 - project code is warning-clean with warnings denied while upstream warnings remain
   visible but nonfatal;
-- `file build/native/bin/hyperscan` reports x86_64 on both Intel and Apple Silicon Macs,
+- `file build/hyperscan/bin/hyperscan` reports x86_64 on both Intel and Apple Silicon Macs,
   and `otool -L`/`ldd` shows no system Hyperscan or unexpected shared OpenSSL dependency;
 - the recipe test package and project CTest pass, and `hs_version()` contains the fixed
   date rather than the build date.
@@ -591,7 +602,7 @@ disposable local home, corrupt the source archive and require checksum failure. 
 one required package from another disposable home and require offline installation to
 fail clearly rather than falling back to system headers/libraries.
 
-Build the sanitizer variant in `build/native-sanitize/` with the local recipe option and
+Build the sanitizer variant in `build/hyperscan-sanitize/` with the local recipe option and
 root CMake option both enabled. Run CTest with leak detection where supported; use
 `ASAN_OPTIONS=detect_leaks=0` only on macOS runtimes without LeakSanitizer. Require no
 ASan/UBSan finding for package smoke tests or accepted CLI inputs.
@@ -671,6 +682,8 @@ ASan/UBSan finding for package smoke tests or accepted CLI inputs.
 - Conan is used because this library has a material native dependency graph; the plan
   does not consume Conan Center's older Hyperscan binary or convert unrelated native
   libraries to Conan.
+- The gated, dedicated Hyperscan build leaves the default `build/native` RegexTrie/TRE
+  Debug workflow usable without Conan, C++, OpenSSL, or Hyperscan's x86-only package.
 - The package and CLI target only x86_64/Core2+SSSE3 Linux/macOS, with explicit Rosetta 2
   execution on Apple Silicon and early rejection elsewhere.
 - `bin/hyperscan` invokes only the fixed project build and exposes exact `scan` and `info`

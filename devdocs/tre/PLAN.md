@@ -139,6 +139,8 @@ build tree; do not create a nested project-owned `CMakeLists.txt` or a Conan gra
 Include CMake's `ExternalProject` module and add a `tre_upstream` target with:
 
 ```cmake
+option(REGEX_UTILS_BUILD_TRE "Build the TRE agrep exercise" ON)
+
 include(ExternalProject)
 
 set(TRE_COMMIT 71bfcaf0af3994384987c6c2679ed7d078ffe189)
@@ -184,6 +186,12 @@ ExternalProject_Add(
   INSTALL_COMMAND "${TRE_MAKE_PROGRAM}" install
 )
 ```
+
+Guard the `ExternalProject` include/declaration, every Autotools host-tool preflight,
+the installed-path variables, `tre-upstream-check`, and the TRE CTest registration with
+`if(REGEX_UTILS_BUILD_TRE)`. The option defaults on, preserving the combined RegexTrie/TRE
+Debug build. When it is off, configuring the shared root must not require Autotools,
+gettext, libtool, or make and must not fetch TRE.
 
 Form `TRE_CFLAGS` as one space-delimited string, not a CMake semicolon list. For the
 supported Debug build use `-O0 -g3 -Wall -Wextra -Wpedantic`; leave `TRE_LDFLAGS`
@@ -508,6 +516,8 @@ generous timeout and do not mistake it for a hang while it is consuming CPU.
 
 - CMake fetches only archive `71bfcaf0af39` with the recorded SHA-256, bootstraps and
   builds it using upstream Autotools, and installs it only below `build/native`.
+- `REGEX_UTILS_BUILD_TRE=OFF` omits its source/tool preflight, ExternalProject, tests,
+  and install so another native target does not require TRE's Autotools stack.
 - TRE is built static with approximate, `agrep`, wide-character, and multibyte support;
   NLS, system ABI compatibility, and internal stdout tracing are disabled.
 - Conan is not added; the plan records why the current Conan Center recipe is stale and

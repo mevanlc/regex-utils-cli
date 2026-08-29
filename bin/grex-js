@@ -1,0 +1,236 @@
+#!/usr/bin/env node
+
+import {createRequire} from 'node:module';
+import {parseArgs} from 'node:util';
+import {
+  errorMessage,
+  findPackageMetadata,
+  readInput,
+  rejectRepeatedOptions,
+  runCli,
+  runtimeError,
+  splitRecords,
+  usageError,
+  writeStdout,
+} from '../lib/node-cli.js';
+
+const program = 'grex-js';
+const help = String.raw`Usage:
+  grex-js [OPTIONS] [TEST_CASE...]
+
+Input:
+  TEST_CASE...                    Literal positive examples as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited examples; use - for stdin
+
+Character generalization:
+      --digits                    Convert Unicode decimal digits to \d
+      --non-digits                Convert Unicode non-digits to \D
+      --whitespace                Convert Unicode whitespace to \s
+      --non-whitespace            Convert Unicode non-whitespace to \S
+      --words                     Convert Unicode word characters to \w
+      --non-words                 Convert Unicode non-word characters to \W
+
+Repetitions:
+      --repetitions               Convert repeated substrings to quantifiers
+      --min-repetitions N         Minimum repeats beyond the first; default 1
+      --min-substring-length N    Minimum repeated substring length; default 1
+
+Rendering and matching semantics:
+      --ignore-case               Emit a case-insensitive expression
+      --capture-groups            Use capturing instead of non-capturing groups
+      --escape-non-ascii MODE     MODE is code-point or surrogate-pair
+      --verbose                   Emit a multiline expression with (?x)
+      --no-start-anchor           Omit ^
+      --no-end-anchor             Omit $
+      --no-anchors                Omit both ^ and $
+
+General options:
+  -h, --help                      Print help and exit
+  -V, --version                   Print command and package version and exit
+`;
+
+function parseCliArgs(args) {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      strict: true,
+      tokens: true,
+      options: {
+        input: {type: 'string', short: 'i'},
+        digits: {type: 'boolean'},
+        'non-digits': {type: 'boolean'},
+        whitespace: {type: 'boolean'},
+        'non-whitespace': {type: 'boolean'},
+        words: {type: 'boolean'},
+        'non-words': {type: 'boolean'},
+        repetitions: {type: 'boolean'},
+        'min-repetitions': {type: 'string'},
+        'min-substring-length': {type: 'string'},
+        'ignore-case': {type: 'boolean'},
+        'capture-groups': {type: 'boolean'},
+        'escape-non-ascii': {type: 'string'},
+        verbose: {type: 'boolean'},
+        'no-start-anchor': {type: 'boolean'},
+        'no-end-anchor': {type: 'boolean'},
+        'no-anchors': {type: 'boolean'},
+        help: {type: 'boolean', short: 'h'},
+        version: {type: 'boolean', short: 'V'},
+      },
+    });
+  } catch (error) {
+    usageError(errorMessage(error));
+  }
+}
+
+function parseUint32(value, option) {
+  if (!/^[1-9][0-9]*$/u.test(value)) {
+    usageError(`--${option} must be an integer from 1 through 4294967295`);
+  }
+  const number = BigInt(value);
+  if (number > 4_294_967_295n) {
+    usageError(`--${option} must be an integer from 1 through 4294967295`);
+  }
+  return Number(number);
+}
+
+async function loadDependency() {
+  try {
+    const require = createRequire(import.meta.url);
+    const entry = require.resolve('@pemistahl/grex');
+    const metadata = await findPackageMetadata(entry, '@pemistahl/grex');
+    const dependency = require('@pemistahl/grex');
+    const Builder = dependency.RegExpBuilder;
+    const requiredMethods = [
+      'free',
+      'withConversionOfDigits',
+      'withConversionOfNonDigits',
+      'withConversionOfWhitespace',
+      'withConversionOfNonWhitespace',
+      'withConversionOfWords',
+      'withConversionOfNonWords',
+      'withConversionOfRepetitions',
+      'withMinimumRepetitions',
+      'withMinimumSubstringLength',
+      'withCaseInsensitiveMatching',
+      'withCapturingGroups',
+      'withEscapingOfNonAsciiChars',
+      'withVerboseMode',
+      'withoutStartAnchor',
+      'withoutEndAnchor',
+      'withoutAnchors',
+      'build',
+    ];
+    if (metadata.version !== '1.0.2' || typeof Builder !== 'function' ||
+        typeof Builder.from !== 'function' ||
+        requiredMethods.some((name) => typeof Builder.prototype[name] !== 'function')) {
+      throw new Error('invalid package API');
+    }
+    return Builder;
+  } catch {
+    runtimeError('@pemistahl/grex 1.0.2 is not installed; run npm ci');
+  }
+}
+
+async function main() {
+  const parsed = parseCliArgs(process.argv.slice(2));
+  rejectRepeatedOptions(parsed.tokens);
+  const {values, positionals} = parsed;
+  if (values.help) {
+    const otherOptions = parsed.tokens.filter(
+      (token) => token.kind === 'option' && token.name !== 'help',
+    );
+    if (otherOptions.length || positionals.length) {
+      usageError('--help accepts no other options or operands');
+    }
+    await writeStdout(help);
+    return;
+  }
+  if (values.version) {
+    const otherOptions = parsed.tokens.filter(
+      (token) => token.kind === 'option' && token.name !== 'version',
+    );
+    if (otherOptions.length || positionals.length) {
+      usageError('--version accepts no other options or operands');
+    }
+    await loadDependency();
+    await writeStdout('grex-js 1.0.2\n');
+    return;
+  }
+  if (positionals.length && values.input !== undefined) {
+    usageError('TEST_CASE arguments and --input are mutually exclusive');
+  }
+  if ((values['min-repetitions'] !== undefined ||
+       values['min-substring-length'] !== undefined) && !values.repetitions) {
+    usageError('repetition thresholds require --repetitions');
+  }
+  if (values['no-anchors'] &&
+      (values['no-start-anchor'] || values['no-end-anchor'])) {
+    usageError('--no-anchors cannot be combined with individual anchor options');
+  }
+  if (values['escape-non-ascii'] !== undefined &&
+      !['code-point', 'surrogate-pair'].includes(values['escape-non-ascii'])) {
+    usageError('--escape-non-ascii must be code-point or surrogate-pair');
+  }
+  const minRepetitions = values['min-repetitions'] === undefined ? undefined :
+    parseUint32(values['min-repetitions'], 'min-repetitions');
+  const minSubstringLength = values['min-substring-length'] === undefined ? undefined :
+    parseUint32(values['min-substring-length'], 'min-substring-length');
+
+  let testCases;
+  if (positionals.length) {
+    testCases = positionals;
+  } else if (values.input !== undefined) {
+    const label = values.input === '-' ? 'stdin' : `input file '${values.input}'`;
+    testCases = splitRecords(await readInput(values.input, label));
+  } else {
+    if (process.stdin.isTTY) usageError('no test cases supplied');
+    testCases = splitRecords(await readInput('-', 'stdin'));
+  }
+
+  const Builder = await loadDependency();
+  let builder;
+  let pattern;
+  let builderError;
+  try {
+    builder = Builder.from(testCases);
+    const apply = (enabled, method, argument) => {
+      if (enabled) {
+        builder = argument === undefined ? builder[method]() : builder[method](argument);
+      }
+    };
+    apply(values.digits, 'withConversionOfDigits');
+    apply(values['non-digits'], 'withConversionOfNonDigits');
+    apply(values.whitespace, 'withConversionOfWhitespace');
+    apply(values['non-whitespace'], 'withConversionOfNonWhitespace');
+    apply(values.words, 'withConversionOfWords');
+    apply(values['non-words'], 'withConversionOfNonWords');
+    apply(values.repetitions, 'withConversionOfRepetitions');
+    apply(minRepetitions !== undefined, 'withMinimumRepetitions', minRepetitions);
+    apply(minSubstringLength !== undefined, 'withMinimumSubstringLength', minSubstringLength);
+    apply(values['ignore-case'], 'withCaseInsensitiveMatching');
+    apply(values['capture-groups'], 'withCapturingGroups');
+    apply(values['escape-non-ascii'] !== undefined, 'withEscapingOfNonAsciiChars',
+      values['escape-non-ascii'] === 'surrogate-pair');
+    apply(values.verbose, 'withVerboseMode');
+    apply(values['no-start-anchor'], 'withoutStartAnchor');
+    apply(values['no-end-anchor'], 'withoutEndAnchor');
+    apply(values['no-anchors'], 'withoutAnchors');
+    pattern = builder.build();
+  } catch (error) {
+    builderError = error;
+  } finally {
+    if (builder && typeof builder.free === 'function') {
+      try {
+        builder.free();
+      } catch (error) {
+        builderError ??= error;
+      }
+    }
+  }
+  if (builderError) runtimeError(errorMessage(builderError));
+  if (typeof pattern !== 'string') runtimeError('upstream returned no regular expression');
+  await writeStdout(`${pattern}\n`);
+}
+
+await runCli(program, main);

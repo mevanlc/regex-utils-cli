@@ -383,3 +383,69 @@ it intentionally rejects conditionals, non-built-in callouts, and other rare syn
 It parses and transforms syntax only: it does not execute Oniguruma regexes, convert
 them to JavaScript, infer patterns, generate matches, expose arbitrary visitors, or
 accept mutable AST JSON.
+
+## grex-js
+
+`bin/grex-js` passes literal positive examples to the WebAssembly-backed
+`@pemistahl/grex` 1.0.2 `RegExpBuilder` and prints its inferred regex source.
+
+```text
+Usage: grex-js [OPTIONS] [TEST_CASE...]
+
+Input:
+  TEST_CASE...                    Literal positive examples as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited examples; use - for stdin
+
+Character generalization:
+      --digits / --non-digits
+      --whitespace / --non-whitespace
+      --words / --non-words
+
+Repetitions:
+      --repetitions
+      --min-repetitions N         Range 1 through 4294967295
+      --min-substring-length N    Range 1 through 4294967295
+
+Rendering and matching semantics:
+      --ignore-case
+      --capture-groups
+      --escape-non-ascii MODE     code-point or surrogate-pair
+      --verbose
+      --no-start-anchor
+      --no-end-anchor
+      --no-anchors
+```
+
+Choose positional examples, one input file, or stdin. File and stdin records are
+strict UTF-8 and LF-delimited, with CR removed only when it precedes LF. Interior
+empty records are preserved, a final delimiter adds no phantom example, and a
+zero-byte source remains an empty list (which upstream rejects). One empty example
+is distinct and successfully produces `^$`. The wrapper does not sort, deduplicate,
+trim, or parse the literal examples.
+
+```console
+$ npm run --silent grex-js -- hello world
+^(?:hello|world)$
+
+$ printf '%s\n' a aa 123 | npm run --silent grex-js -- --digits --words
+^(?:\d\d\d|\w(?:\w)?)$
+
+$ npm run --silent grex-js -- --repetitions \
+    --min-substring-length 2 aa bcbc defdefdef
+^(?:aa|(?:bc){2}|(?:def){3})$
+
+$ npm run --silent grex-js -- \
+    --escape-non-ascii surrogate-pair 'You smell like 💩.'
+^You smell like \u{d83d}\u{dca9}\.$
+```
+
+The six character conversions deliberately generalize beyond the supplied examples;
+their overlap precedence is defined by upstream. Repetition thresholds are valid
+only with `--repetitions`. The result is anchored by default, while the three anchor
+switches exercise the corresponding builder methods.
+
+Output is PCRE-oriented Unicode 15.0 source and is only mostly compatible with
+JavaScript `RegExp`: case-insensitive and verbose modes emit leading `(?i)` and
+`(?x)`, and Unicode escape support depends on the consumer's dialect. The command
+does not accept negative examples or existing regexes, execute matches, optimize an
+input regex, generate matching text, or rewrite the source returned by upstream.

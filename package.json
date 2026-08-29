@@ -6,13 +6,16 @@
     "node": ">=20"
   },
   "scripts": {
+    "grex-js": "node ./bin/grex-js",
     "oniguruma-parser": "node ./bin/oniguruma-parser",
     "regexp-tree": "node ./node_modules/regexp-tree-cli/bin/regexp-tree-cli",
     "test": "node --test",
+    "test:grex-js": "node --test test/grex-js.test.js",
     "test:oniguruma-parser": "node --test test/oniguruma-parser.test.js",
     "test:regexp-tree": "node --test test/regexp-tree-cli.test.js"
   },
   "dependencies": {
+    "@pemistahl/grex": "1.0.2",
     "oniguruma-parser": "0.12.2",
     "regexp-tree-cli": "0.0.21"
   }

@@ -989,3 +989,104 @@ Native help/version exit 0, Clap usage errors exit 2, handled file failures exit
 builder/input or broken-pipe panics normally exit 101. There is no project diagnostic
 prefix or JSON mode. Grex does not accept negative examples, optimize an existing regex,
 generate matching text, search candidate text, or expose its automaton.
+
+## Native C/C++ setup
+
+The native exercises use the shared root CMake project. RegexTrie requires CMake 3.24
+or newer and a C11 compiler; it has no Conan dependency. Configure, build, and test its
+Debug target with:
+
+```sh
+cmake -S . -B build/native \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DREGEX_UTILS_ENABLE_SANITIZERS=OFF
+cmake --build build/native --parallel
+ctest --test-dir build/native --output-on-failure
+```
+
+The first configure downloads only the immutable RegexTrie commit archive into the
+ignored build tree and verifies SHA-256
+`ed0e39fb3359927ff74f0a552a85e96371898ada82ca483fb68a115a73e7133c`.
+Subsequent builds reuse that source without a global installation. Set
+`REGEX_UTILS_BUILD_REGEXTRIE_C=OFF` to omit both the fetch and every RegexTrie target.
+
+For an ASan/UBSan build on Clang or GCC:
+
+```sh
+cmake -S . -B build/native-sanitize \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DREGEX_UTILS_ENABLE_SANITIZERS=ON
+cmake --build build/native-sanitize --parallel
+ASAN_OPTIONS=detect_leaks=0 \
+  ctest --test-dir build/native-sanitize --output-on-failure
+```
+
+Use `detect_leaks=0` only on macOS, where this sanitizer runtime lacks LeakSanitizer.
+
+## RegexTrie (C)
+
+`bin/regextrie-c` launches only `build/native/bin/regextrie-c`; it never configures or
+builds implicitly. The custom CLI maps directly to pinned upstream calls for trie
+creation, `add_word()` or `add_regex()`, `find_word()`, and cleanup.
+
+```text
+Usage:
+  regextrie-c [OPTIONS] [WORD...]
+
+Dictionary input:
+  WORD...                         Dictionary records as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited dictionary records;
+                                  use - for stdin
+  -m, --insert-mode word|regex    Call add_word or add_regex [default: regex]
+
+Queries:
+  -q, --query QUERY               Query with find_word; repeatable
+  -Q, --query-input FILE          Read LF/CRLF-delimited queries; use - for stdin
+
+Other:
+  -h, --help                      Show help
+  -V, --version                   Show wrapper and pinned source versions
+```
+
+Choose exactly one dictionary source and one query source; at most one may be stdin.
+Files use strict UTF-8 LF/CRLF records without trimming other bytes. A final delimiter
+adds no phantom record, interior empty records are preserved, and a zero-byte dictionary
+creates an empty trie. A zero-record query source is an error. Embedded NUL is rejected
+because upstream uses C strings.
+
+```console
+$ ./bin/regextrie-c -q foo -q '?oo' -q '???' -q qux -- foo bar
+{"query":"foo","found":true,"insert_mode":"regex"}
+{"query":"?oo","found":true,"insert_mode":"regex"}
+{"query":"???","found":true,"insert_mode":"regex"}
+{"query":"qux","found":false,"insert_mode":"regex"}
+
+$ ./bin/regextrie-c --insert-mode word -q foo -q FOO -q '&//' -q '?oo' -- foo
+{"query":"foo","found":true,"insert_mode":"word"}
+{"query":"FOO","found":true,"insert_mode":"word"}
+{"query":"&//","found":true,"insert_mode":"word"}
+{"query":"?oo","found":false,"insert_mode":"word"}
+```
+
+This library is not a conventional regex engine. It reduces every byte to one of 32
+classes. Consequently ASCII case collides, `foo`, `FOO`, and `&//` share a path, `?`
+collides with `_`, and `@` collides with the terminal slot. UTF-8 is transported
+losslessly but indexed byte by byte rather than by Unicode scalar or grapheme.
+
+Default `regex` mode inserts the original word and every same-length combination made
+by replacing byte positions with literal `?` paths. Its setup grows exponentially; the
+CLI therefore limits regex-mode records to 16 bytes and cumulative expansion to 65,536
+paths. All records are limited to 1,024 bytes and each file/stdin source to 16 MiB. The
+entire input and JSON Lines output are preflighted and buffered before upstream work or
+the first stdout write.
+
+The command reports each whole-path query as `found`, even when that result comes from
+an upstream byte-class collision. It does not parse or emit regex syntax, infer or
+optimize regexes, search within subjects, generate matching text, return spans/captures,
+or enumerate inserted values. Upstream allocation assertions and recursive cleanup can
+still abort under genuine resource exhaustion.
+
+The pinned upstream source has no license declaration. It is fetched only for this
+local exercise and must not be redistributed, including in linked binary form, without
+permission from its copyright holder.

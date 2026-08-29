@@ -1,0 +1,15 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=regextrie-c
+SCRIPT_DIR=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+EXECUTABLE=$ROOT/build/native/bin/regextrie-c
+
+if [ ! -x "$EXECUTABLE" ]; then
+    printf '%s: build/native/bin/regextrie-c is missing; run cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Debug, then cmake --build build/native\n' "$PROGRAM" >&2
+    exit 1
+fi
+
+exec "$EXECUTABLE" "$@"

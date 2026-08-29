@@ -242,8 +242,8 @@ prove -v t
 
 ## Node setup
 
-The Node commands share one root manifest and lockfile. Install the exact
-project-local dependency graph with Node and npm:
+The Node commands share one root manifest and lockfile. With Node 20 or newer,
+install the exact project-local dependency graph with npm:
 
 ```sh
 npm ci
@@ -449,3 +449,69 @@ JavaScript `RegExp`: case-insensitive and verbose modes emit leading `(?i)` and
 `(?x)`, and Unicode escape support depends on the consumer's dialect. The command
 does not accept negative examples or existing regexes, execute matches, optimize an
 input regex, generate matching text, or rewrite the source returned by upstream.
+
+## regex-trie-js
+
+`bin/regex-trie-js` exercises the literal prefix trie in regex-trie 1.0.4. It can
+print the generated JavaScript regex body, check exact trie membership, or test
+candidate text with the generated regex.
+
+```text
+Usage:
+  regex-trie-js build [OPTIONS] [PHRASE...]
+  regex-trie-js contains [OPTIONS] [PHRASE...]
+  regex-trie-js match [OPTIONS] [PHRASE...]
+
+Phrase input:
+  PHRASE...                        Literal phrases as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited phrases; use - for stdin
+
+Candidate input for contains/match:
+  -c, --candidate TEXT            Candidate text; repeatable
+  -C, --candidate-input FILE      Read LF/CRLF-delimited candidates; use - for stdin
+```
+
+Choose positional phrases, one phrase file, or stdin. `contains` and `match` also
+require either repeatable candidate arguments or one candidate file. At most one
+source can consume stdin. File and stdin records use strict UTF-8; LF and CRLF are
+delimiters, an unterminated final record is retained, and interior blank records are
+preserved. Empty phrases and duplicate phrases are passed to the library unchanged;
+upstream ignores empty phrases and suppresses duplicates. Input is never sorted.
+
+```console
+$ npm run --silent regex-trie-js -- build foo bar baz
+(?:foo|ba[rz])
+
+$ printf '%s\n' f fo fox | npm run --silent regex-trie-js -- build
+f(?:ox?)?
+
+$ npm run --silent regex-trie-js -- contains \
+    --candidate foo --candidate food foo bar baz
+{"candidate":"foo","contains":true}
+{"candidate":"food","contains":false}
+
+$ npm run --silent regex-trie-js -- match \
+    --candidate foo --candidate food --candidate bat foo bar baz
+{"candidate":"foo","matches":true}
+{"candidate":"food","matches":true}
+{"candidate":"bat","matches":false}
+```
+
+`contains` is exact membership, while `match` uses `toRegExp()` and therefore
+performs case-sensitive, unanchored substring matching with no flags. The `build`
+output is the constructor-ready pattern body from `toString()`, not a slash-delimited
+regex literal. All inputs are literal phrases; the command does not accept or optimize
+existing regexes, add anchors, generate matching text, or promise globally minimal
+output.
+
+Rendering is observably order-sensitive: `a b` produces `[ab]` and `b a` produces
+`[ba]`, while integer-like trie keys follow JavaScript enumeration rules (`9 1`
+produces `[19]`). The old jsesc dependency renders non-ASCII text as escapes such as
+`caf\xE9`, `\uD83D\uDCA9`, and `\u6F22\u5B57`.
+
+Two upstream control-character defects are intentionally preserved. Backspace is
+rendered as `\b`, which JavaScript interprets as a word boundary, and NUL followed by
+digits 1 through 7 can become a legacy octal escape such as `\01`; generated matching
+can therefore fail for those original phrases. The recursive upstream renderer can
+also exhaust the JavaScript stack on a sufficiently long phrase. This exploratory CLI
+normalizes that error, but it is not a CPU, memory, or recursion-isolation boundary.

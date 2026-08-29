@@ -1,0 +1,207 @@
+#!/usr/bin/env node
+
+import {createRequire} from 'node:module';
+import {parseArgs} from 'node:util';
+import {
+  CliError,
+  errorMessage,
+  findPackageMetadata,
+  readInput,
+  rejectRepeatedOptions,
+  runCli,
+  runtimeError,
+  splitRecords,
+  usageError,
+  writeStdout,
+} from '../lib/node-cli.js';
+
+const program = 'regex-trie-js';
+const commands = new Set(['build', 'contains', 'match']);
+const topHelp = `Usage:
+  regex-trie-js build [OPTIONS] [PHRASE...]
+  regex-trie-js contains [OPTIONS] [PHRASE...]
+  regex-trie-js match [OPTIONS] [PHRASE...]
+
+Commands:
+  build                           Print the generated JavaScript regex body
+  contains                        Check exact trie membership
+  match                           Test unanchored generated-regex matching
+
+General options:
+  -h, --help                      Print help and exit
+  -V, --version                   Print command and package version and exit
+`;
+
+function commandHelp(command) {
+  const candidates = command === 'build' ? '' : `
+Candidate input:
+  -c, --candidate TEXT            Candidate text; repeatable
+  -C, --candidate-input FILE      Read LF/CRLF-delimited candidates; use - for stdin
+`;
+  const output = command === 'build'
+    ? 'Output: the exact pattern body returned by trie.toString().'
+    : command === 'contains'
+      ? 'Output: JSON Lines objects with candidate and contains properties.'
+      : 'Output: JSON Lines objects with candidate and matches properties.';
+  return `Usage: regex-trie-js ${command} [OPTIONS] [PHRASE...]
+
+Phrase input:
+  PHRASE...                        Literal phrases as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited phrases; use - for stdin
+${candidates}
+General options:
+  -h, --help                      Print help and exit
+
+${output}
+`;
+}
+
+function parseCommandArgs(args) {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      strict: true,
+      tokens: true,
+      options: {
+        input: {type: 'string', short: 'i'},
+        candidate: {type: 'string', short: 'c', multiple: true},
+        'candidate-input': {type: 'string', short: 'C'},
+        help: {type: 'boolean', short: 'h'},
+        version: {type: 'boolean', short: 'V'},
+      },
+    });
+  } catch (error) {
+    usageError(errorMessage(error));
+  }
+}
+
+async function loadDependency() {
+  try {
+    const require = createRequire(import.meta.url);
+    const entry = require.resolve('regex-trie');
+    const metadata = await findPackageMetadata(entry, 'regex-trie');
+    const RegexTrie = require('regex-trie');
+    const methods = ['add', 'contains', 'toString', 'toRegExp'];
+    if (metadata.version !== '1.0.4' || typeof RegexTrie !== 'function' ||
+        methods.some((name) => typeof RegexTrie.prototype[name] !== 'function')) {
+      throw new Error('invalid package API');
+    }
+    return RegexTrie;
+  } catch {
+    runtimeError('regex-trie 1.0.4 is not installed; run npm ci');
+  }
+}
+
+async function collectRecords(pathname, kind) {
+  const label = pathname === '-' ? 'stdin' : `${kind} file '${pathname}'`;
+  return splitRecords(await readInput(pathname, label));
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv[0] === '--help' || argv[0] === '-h') {
+    if (argv.length !== 1) usageError('--help accepts no command or operands');
+    await writeStdout(topHelp);
+    return;
+  }
+  if (argv[0] === '--version' || argv[0] === '-V') {
+    if (argv.length !== 1) usageError('--version accepts no command or operands');
+    await loadDependency();
+    await writeStdout('regex-trie-js 1.0.4\n');
+    return;
+  }
+  if (argv.length === 0) usageError('missing command');
+  const command = argv.shift();
+  if (!commands.has(command)) usageError(`unknown command '${command}'`);
+
+  const parsed = parseCommandArgs(argv);
+  rejectRepeatedOptions(parsed.tokens, new Set(['candidate']));
+  const {values, positionals} = parsed;
+  if (values.version) usageError('--version is available only at the top level');
+  if (values.help) {
+    const otherOptions = parsed.tokens.filter(
+      (token) => token.kind === 'option' && token.name !== 'help',
+    );
+    if (otherOptions.length || positionals.length) {
+      usageError('--help accepts no other options or operands');
+    }
+    await writeStdout(commandHelp(command));
+    return;
+  }
+  if (positionals.length && values.input !== undefined) {
+    usageError('PHRASE arguments and --input are mutually exclusive');
+  }
+
+  const candidateArgs = values.candidate;
+  const candidateFile = values['candidate-input'];
+  if (command === 'build') {
+    if (candidateArgs !== undefined || candidateFile !== undefined) {
+      usageError('candidate options are valid only with contains or match');
+    }
+  } else {
+    const candidateFamilies = (candidateArgs !== undefined ? 1 : 0) +
+      (candidateFile !== undefined ? 1 : 0);
+    if (candidateFamilies !== 1) {
+      usageError(`${command} requires exactly one candidate source`);
+    }
+  }
+
+  const phrasesUseStdin = positionals.length === 0 &&
+    (values.input === undefined || values.input === '-');
+  const candidatesUseStdin = candidateFile === '-';
+  if (phrasesUseStdin && candidatesUseStdin) {
+    usageError('phrase and candidate input cannot both read stdin');
+  }
+
+  let phrases;
+  if (positionals.length) {
+    phrases = positionals;
+  } else if (values.input !== undefined) {
+    phrases = await collectRecords(values.input, 'input');
+  } else {
+    if (process.stdin.isTTY) usageError('no phrases supplied');
+    phrases = await collectRecords('-', 'input');
+  }
+
+  let candidates;
+  if (command !== 'build') {
+    if (candidateArgs !== undefined) {
+      candidates = candidateArgs;
+    } else {
+      candidates = await collectRecords(candidateFile, 'candidate input');
+      if (candidates.length === 0) runtimeError('candidate input contains no records');
+    }
+  }
+
+  const RegexTrie = await loadDependency();
+  let trie;
+  let output;
+  try {
+    trie = new RegexTrie();
+    trie.add(phrases);
+    if (command === 'build') {
+      const body = trie.toString();
+      if (body === undefined) runtimeError('no non-empty phrases were added');
+      output = `${body}\n`;
+    } else if (command === 'contains') {
+      output = `${candidates.map((candidate) => JSON.stringify({
+        candidate,
+        contains: trie.contains(candidate),
+      })).join('\n')}\n`;
+    } else {
+      const regex = trie.toRegExp();
+      if (regex === undefined) runtimeError('no non-empty phrases were added');
+      output = `${candidates.map((candidate) => JSON.stringify({
+        candidate,
+        matches: regex.test(candidate),
+      })).join('\n')}\n`;
+    }
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    runtimeError(errorMessage(error));
+  }
+  await writeStdout(output);
+}
+
+await runCli(program, main);

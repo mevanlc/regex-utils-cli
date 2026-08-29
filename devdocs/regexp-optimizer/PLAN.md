@@ -29,6 +29,13 @@ regex feature.
   The CLI must not enable `use re 'eval'` for user patterns.
 - Upstream documents optimization as non-idempotent: a second pass can add nested
   noncapturing groups even when matching semantics remain unchanged.
+- Version 0.23 mishandles an escaped literal pipe in an alternation. Optimizing
+  `foo\|bar|baz` produces `(?^:(?:ba[rz]|foo))`, losing the literal-pipe branch and
+  broadening the language. Preserve and document that upstream result rather than
+  adding a wrapper-side repair.
+- An `x`-mode pattern ending in a comment compiles when the scoped wrapper is closed
+  after an ignored LF, but version 0.23 reconstructs an invalid expression internally.
+  Report that optimizer exception cleanly rather than rewriting the pattern.
 - The package has no upstream CLI.
 
 A local feasibility check with Homebrew Perl 5.44.0 confirmed that
@@ -134,7 +141,9 @@ Options:
 
 1. Decode and validate the selected input and flags.
 2. If flags are present, construct a scoped inline modifier group
-   `(?FLAGS:PATTERN)`; otherwise compile PATTERN directly.
+   `(?FLAGS:PATTERN)`; otherwise compile PATTERN directly. When `x` is active, append
+   one ignored LF inside the group so an end-of-input comment cannot consume the
+   wrapper's closing parenthesis.
 3. Compile with a block `eval` around `qr/.../`. Interpolate the already decoded
    pattern as regex data; do not construct and execute a string `eval`.
 4. Do not enable `re 'eval'`. Reject user patterns containing executable Perl
@@ -225,8 +234,13 @@ prove -v t/regexp-optimizer.t
   identical output when the bytes are identical.
 - A non-alternating pattern succeeds without claiming that a rewrite occurred.
 - An empty redirected input succeeds and emits one empty output line.
-- Nested groups, escaped metacharacters, an escaped literal pipe, and `x`-mode
-  comments exercise the upstream cases represented in its test suite.
+- Nested groups, escaped metacharacters, and ordinary `x`-mode whitespace exercise the
+  upstream cases represented in its test suite.
+- Characterize the escaped-literal-pipe defect exactly: `foo\|bar|baz` renders
+  `(?^:(?:ba[rz]|foo))`, ceases to full-match `foo|bar`, and starts full-matching
+  `foo`. This pinned failure is not included in semantic-equivalence assertions.
+- Confirm an end-of-input `x` comment passes wrapper compilation but fails during
+  upstream optimization with status 1, a prefixed diagnostic, and empty stdout.
 - A UTF-8 pattern with non-ASCII literals recompiles successfully and matches the
   same positive and negative samples before and after optimization.
 - Recompile CLI output as a Perl regex and compare matching results for a table of

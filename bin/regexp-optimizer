@@ -1,0 +1,193 @@
+#!/usr/bin/env perl
+
+use v5.8.1;
+use strict;
+use warnings;
+
+use Encode qw(FB_CROAK decode encode);
+use FindBin qw($Bin);
+use Getopt::Long ();
+use lib "$Bin/../local/lib/perl5";
+use re ();
+no re 'eval';
+
+my $PROGRAM = 'regexp-optimizer';
+my $USAGE = <<'USAGE';
+Usage: regexp-optimizer [OPTIONS] [PATTERN]
+
+Optimize one Perl regular-expression body.
+
+Input:
+  PATTERN                    Regex body supplied as one argument
+  -i, --input FILE           Read the complete regex body from FILE; use - for stdin
+
+Options:
+  -f, --flags FLAGS          Perl modifiers drawn from i, m, s, and x
+  -h, --help                 Print help and exit
+  -V, --version              Print the command and module version and exit
+USAGE
+
+binmode STDIN,  ':raw';
+binmode STDOUT, ':raw';
+binmode STDERR, ':raw';
+
+sub diagnostic {
+    my ($status, $message, $usage_hint) = @_;
+    $message = 'unknown failure' unless defined $message && length $message;
+    $message =~ s/\s+\z//;
+    $message =~ s/\s*\n\s*/ /g;
+    print STDERR "$PROGRAM: $message\n";
+    print STDERR "Try '$PROGRAM --help' for usage.\n" if $usage_hint;
+    exit $status;
+}
+
+sub usage_error {
+    diagnostic(2, $_[0], 1);
+}
+
+sub decode_utf8 {
+    my ($bytes, $source) = @_;
+    return $bytes if utf8::is_utf8($bytes);
+
+    my $decoded = eval { decode('UTF-8', $bytes, FB_CROAK) };
+    diagnostic(1, "$source is not valid UTF-8: $@", 0) if $@;
+    return $decoded;
+}
+
+sub read_all {
+    my ($handle, $source) = @_;
+    local $/;
+    local $! = 0;
+    my $bytes = <$handle>;
+    if (!defined $bytes && $!) {
+        diagnostic(1, "cannot read $source: $!", 0);
+    }
+    return defined $bytes ? $bytes : '';
+}
+
+my ($input_file, $flags, $help, $version);
+my ($input_count, $flags_count) = (0, 0);
+my $parse_warning = '';
+my $parser = Getopt::Long::Parser->new(
+    config => [qw(no_auto_abbrev no_ignore_case no_bundling)],
+);
+
+my $parsed;
+{
+    local $SIG{__WARN__} = sub { $parse_warning .= join '', @_ };
+    $parsed = $parser->getoptionsfromarray(
+        \@ARGV,
+        'input|i=s' => sub {
+            $input_count++;
+            $input_file = $_[1];
+        },
+        'flags|f=s' => sub {
+            $flags_count++;
+            $flags = $_[1];
+        },
+        'help|h'    => \$help,
+        'version|V' => \$version,
+    );
+}
+
+if (!$parsed) {
+    $parse_warning =~ s/\s+\z//;
+    usage_error($parse_warning || 'invalid option');
+}
+
+if ($help) {
+    print STDOUT $USAGE;
+    exit 0;
+}
+
+usage_error('--input may be supplied only once') if $input_count > 1;
+usage_error('--flags may be supplied only once') if $flags_count > 1;
+usage_error('only one PATTERN may be supplied') if @ARGV > 1;
+usage_error('PATTERN and --input are mutually exclusive')
+    if @ARGV && defined $input_file;
+
+$flags = '' unless defined $flags;
+usage_error("invalid flags '$flags'; use each of i, m, s, and x at most once")
+    if $flags =~ /[^imsx]/ || $flags =~ /(.).*\1/;
+$flags = join '', grep { index($flags, $_) >= 0 } qw(i m s x);
+
+my $dependency_ok = eval {
+    require Regexp::Optimizer;
+    Regexp::Optimizer->import();
+    1;
+};
+if (!$dependency_ok || !defined $Regexp::Optimizer::VERSION
+        || $Regexp::Optimizer::VERSION ne '0.23') {
+    diagnostic(
+        1,
+        'Regexp::Optimizer 0.23 is not installed; run cpanm --local-lib-contained local --installdeps .',
+        0,
+    );
+}
+
+if ($version) {
+    print STDOUT "$PROGRAM (Regexp::Optimizer 0.23)\n";
+    exit 0;
+}
+
+my $pattern_bytes;
+my $pattern_source;
+if (@ARGV) {
+    $pattern_bytes = $ARGV[0];
+    $pattern_source = 'PATTERN';
+}
+elsif (defined $input_file) {
+    if ($input_file eq '-') {
+        $pattern_bytes = read_all(\*STDIN, 'stdin');
+        $pattern_source = 'stdin';
+    }
+    else {
+        open my $input, '<:raw', $input_file
+            or diagnostic(1, "cannot open input file: $!", 0);
+        $pattern_bytes = read_all($input, 'input file');
+        close $input or diagnostic(1, "cannot close input file: $!", 0);
+        $pattern_source = 'input file';
+    }
+}
+else {
+    usage_error('no pattern supplied') if -t STDIN;
+    $pattern_bytes = read_all(\*STDIN, 'stdin');
+    $pattern_source = 'stdin';
+}
+
+my $pattern = decode_utf8($pattern_bytes, $pattern_source);
+utf8::downgrade($pattern, 1);
+
+my $scoped_pattern = $pattern;
+$scoped_pattern .= "\n" if index($flags, 'x') >= 0;
+my $compile_source = length($flags) ? "(?$flags:$scoped_pattern)" : $pattern;
+
+my ($compiled, $compile_error);
+{
+    local $SIG{__WARN__} = sub { die @_ };
+    $compiled = eval { qr/$compile_source/ };
+    $compile_error = $@;
+}
+diagnostic(1, "invalid Perl regular expression: $compile_error", 0)
+    if $compile_error;
+
+my $optimized = eval {
+    my $optimizer = Regexp::Optimizer->new();
+    $optimizer->optimize($compiled);
+};
+my $optimization_error = $@;
+diagnostic(1, "optimization failed: $optimization_error", 0)
+    if $optimization_error;
+
+diagnostic(1, 'optimization failed: upstream returned no regular expression', 0)
+    unless re::is_regexp($optimized);
+my ($optimized_pattern) = re::regexp_pattern($optimized);
+diagnostic(1, 'optimization failed: upstream returned no regular expression', 0)
+    unless defined $optimized_pattern;
+
+my $output = eval { encode('UTF-8', "$optimized_pattern\n", FB_CROAK) };
+my $encoding_error = $@;
+diagnostic(1, "cannot encode optimized pattern: $encoding_error", 0)
+    if $encoding_error;
+print STDOUT $output or diagnostic(1, "cannot write stdout: $!", 0);
+exit 0;

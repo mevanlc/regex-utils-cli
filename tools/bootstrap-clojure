@@ -1,0 +1,123 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=bootstrap-clojure
+VERSION=1.12.5.1664
+ARCHIVE_URL=https://github.com/clojure/brew-install/releases/download/1.12.5.1664/clojure-tools-1.12.5.1664.tar.gz
+ARCHIVE_SHA256=77dd6868948074adcc93e83a796f8e8f15a1a92bcb1b9002d715fd2210e476f3
+
+SCRIPT_DIR=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+DEPS_DIR=$ROOT/.deps
+INSTALL_DIR=$DEPS_DIR/clojure
+JAVA_DESCRIPTION=
+TEMP_DIR=
+
+fail() {
+    printf '%s: %s\n' "$PROGRAM" "$1" >&2
+    if [ -n "$JAVA_DESCRIPTION" ]; then
+        printf '%s: detected Java: %s\n' "$PROGRAM" "$JAVA_DESCRIPTION" >&2
+    fi
+    exit 1
+}
+
+cleanup() {
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+
+trap cleanup EXIT HUP INT TERM
+
+for command in java curl tar sed mktemp mkdir rm mv chmod; do
+    command -v "$command" >/dev/null 2>&1 || fail "required command not found on PATH: $command"
+done
+
+if command -v sha256sum >/dev/null 2>&1; then
+    HASH_COMMAND=sha256sum
+elif command -v shasum >/dev/null 2>&1; then
+    HASH_COMMAND=shasum
+else
+    fail "required SHA-256 utility not found on PATH: sha256sum or shasum"
+fi
+
+JAVA_DESCRIPTION=$(java -version 2>&1 | sed -n '1p')
+JAVA_MAJOR=$(printf '%s\n' "$JAVA_DESCRIPTION" | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p')
+case $JAVA_MAJOR in
+    ''|*[!0-9]*) fail "cannot determine Java major version" ;;
+esac
+[ "$JAVA_MAJOR" -ge 17 ] || fail "Java 17 or newer is required"
+
+installation_description() {
+    CLJ_CONFIG=$DEPS_DIR/clj-config CLJ_CACHE=$DEPS_DIR/clj-cache \
+        "$1/bin/clojure" -Sdescribe 2>/dev/null || return 1
+}
+
+if [ -e "$INSTALL_DIR" ]; then
+    if [ -x "$INSTALL_DIR/bin/clojure" ]; then
+        DESCRIPTION=$(installation_description "$INSTALL_DIR" || true)
+        case $DESCRIPTION in
+            *":version \"$VERSION\""*) exit 0 ;;
+        esac
+    fi
+    fail "existing $INSTALL_DIR is incomplete or has another version; remove that exact directory and rerun"
+fi
+
+mkdir -p "$DEPS_DIR"
+TEMP_DIR=$(mktemp -d "$DEPS_DIR/.clojure-bootstrap.XXXXXX") || fail "cannot create bootstrap directory beneath $DEPS_DIR"
+ARCHIVE=$TEMP_DIR/clojure-tools.tar.gz
+EXTRACT_DIR=$TEMP_DIR/extract
+STAGE_DIR=$TEMP_DIR/install
+mkdir -p "$EXTRACT_DIR" "$STAGE_DIR/lib/clojure/libexec" "$STAGE_DIR/bin" "$STAGE_DIR/share/man/man1"
+
+curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+    --output "$ARCHIVE" "$ARCHIVE_URL" || fail "download failed: $ARCHIVE_URL"
+
+if [ "$HASH_COMMAND" = sha256sum ]; then
+    HASH_OUTPUT=$(sha256sum "$ARCHIVE")
+else
+    HASH_OUTPUT=$(shasum -a 256 "$ARCHIVE")
+fi
+ACTUAL_SHA256=${HASH_OUTPUT%% *}
+[ "$ACTUAL_SHA256" = "$ARCHIVE_SHA256" ] || fail "archive SHA-256 mismatch"
+
+tar -xzf "$ARCHIVE" -C "$EXTRACT_DIR" || fail "cannot extract verified archive"
+SOURCE_DIR=$EXTRACT_DIR/clojure-tools
+for path in deps.edn example-deps.edn tools.edn exec.jar "clojure-tools-$VERSION.jar" clojure clj clojure.1 clj.1; do
+    [ -f "$SOURCE_DIR/$path" ] || fail "verified archive is missing clojure-tools/$path"
+done
+
+cp "$SOURCE_DIR/deps.edn" "$SOURCE_DIR/example-deps.edn" "$SOURCE_DIR/tools.edn" \
+    "$STAGE_DIR/lib/clojure/"
+cp "$SOURCE_DIR/exec.jar" "$SOURCE_DIR/clojure-tools-$VERSION.jar" \
+    "$STAGE_DIR/lib/clojure/libexec/"
+cp "$SOURCE_DIR/clojure.1" "$SOURCE_DIR/clj.1" "$STAGE_DIR/share/man/man1/"
+
+STAGE_PREFIX=$(printf '%s\n' "$STAGE_DIR/lib/clojure" | sed 's/[&@]/\\&/g')
+STAGE_BINDIR=$(printf '%s\n' "$STAGE_DIR/bin" | sed 's/[&@]/\\&/g')
+sed "s@PREFIX@$STAGE_PREFIX@g" "$SOURCE_DIR/clojure" >"$STAGE_DIR/bin/clojure"
+sed "s@BINDIR@$STAGE_BINDIR@g" "$SOURCE_DIR/clj" >"$STAGE_DIR/bin/clj"
+chmod 755 "$STAGE_DIR/bin/clojure" "$STAGE_DIR/bin/clj"
+
+DESCRIPTION=$(installation_description "$STAGE_DIR" || true)
+case $DESCRIPTION in
+    *":version \"$VERSION\""*) ;;
+    *) fail "staged Clojure CLI failed version validation" ;;
+esac
+
+FINAL_PREFIX=$(printf '%s\n' "$INSTALL_DIR/lib/clojure" | sed 's/[&@]/\\&/g')
+FINAL_BINDIR=$(printf '%s\n' "$INSTALL_DIR/bin" | sed 's/[&@]/\\&/g')
+sed "s@PREFIX@$FINAL_PREFIX@g" "$SOURCE_DIR/clojure" >"$STAGE_DIR/bin/clojure"
+sed "s@BINDIR@$FINAL_BINDIR@g" "$SOURCE_DIR/clj" >"$STAGE_DIR/bin/clj"
+chmod 755 "$STAGE_DIR/bin/clojure" "$STAGE_DIR/bin/clj"
+
+mv "$STAGE_DIR" "$INSTALL_DIR"
+DESCRIPTION=$(installation_description "$INSTALL_DIR" || true)
+case $DESCRIPTION in
+    *":version \"$VERSION\""*) ;;
+    *)
+        rm -rf "$INSTALL_DIR"
+        fail "installed Clojure CLI failed final version validation"
+        ;;
+esac

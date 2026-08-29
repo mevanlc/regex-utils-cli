@@ -721,3 +721,92 @@ Empty checklists also retain upstream's `\b\b` behavior and can list word-contai
 text. Deep keys can exhaust Python recursion. The wrapper does not optimize existing
 regexes, accept negative examples, generate matching text, or isolate recursion,
 backtracking, CPU, or memory use.
+
+## JVM setup
+
+The Frak exercise requires JDK 17 or newer plus `curl`, `tar`, `sed`, `mktemp`, and
+either `sha256sum` or `shasum`. Bootstrap the pinned official Clojure CLI and prepare
+the runtime from the repository root:
+
+```sh
+./tools/bootstrap-clojure
+CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" \
+  ./.deps/clojure/bin/clojure -Srepro -P -M:frak
+./tools/verify-jvm-deps
+```
+
+The bootstrap installs Clojure CLI 1.12.5.1664 beneath ignored `.deps/clojure` and
+validates the downloaded archive before installing it. `deps.edn` resolves exactly
+five runtime JARs beneath `.deps/m2`: Clojure 1.12.5, spec.alpha 0.5.238,
+core.specs.alpha 0.4.74, tools.cli 0.3.1, and Frak 0.1.9. Frak's obsolete Clojure
+and unused ClojureScript dependencies are excluded. `tools/verify-jvm-deps` checks
+every JAR against `jvm-deps.sha256` and rejects unlisted JARs.
+
+`-Srepro` excludes user Clojure configuration. Project configuration and dependency
+artifacts stay under `.deps`, while Clojure's ignored classpath cache stays in
+`.cpcache`. Once the tooling and five JARs are prepared, both the cached bootstrap
+and normal Frak invocation work without network access. No global Clojure or
+Leiningen installation is required.
+
+## Frak
+
+This project invokes the published Frak 0.1.9 CLI directly; there is no `bin/frak`
+wrapper or argument/output adapter.
+
+```text
+Usage: frak <flags*> <strings+>
+
+Flags:
+  -e, --exact                      Generated pattern requires an exact match
+  -c, --capture                    Generated pattern captures
+  -E, --escape-chars :KEY|'CHARS'  Set of characters to escape in generated pattern
+  -h, --help                       Display this help message
+```
+
+Use the full invocation from the repository root so Clojure finds `deps.edn` and its
+relative local repository:
+
+```console
+$ CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" \
+    ./.deps/clojure/bin/clojure -Srepro -M:frak -e foo foot
+^foot?$
+
+$ CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" \
+    ./.deps/clojure/bin/clojure -Srepro -M:frak foo bar baz quux
+(?:quux|foo|ba[zr])
+
+$ CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" \
+    ./.deps/clojure/bin/clojure -Srepro -M:frak -E :vim 'a-b'
+a\-b
+```
+
+Each positional argument is one positive literal sample. Shell quoting can preserve
+empty strings, spaces, embedded newlines, Unicode, and metacharacters, but Java argv
+cannot carry NUL and is subject to the operating system's argument-size limit. Frak
+does not read stdin or files. Use Frak's `--` to end option parsing when a sample such
+as `-e` begins with a hyphen.
+
+`--exact` anchors the complete generated source with `^` and `$`. `--capture` makes
+only groups required by upstream factoring capturing. `--escape-chars` replaces the
+default escape set: `:default` restores it, `:vim` selects the Vim very-magic set,
+and a literal value supplies the complete replacement set. An empty value or unknown
+keyword disables escaping, which can produce broader or invalid regex source while
+still exiting successfully because the CLI does not compile its output.
+
+The rendered regex is language-oriented, not canonically spelled. Alternative and
+character-class order can vary between runtimes, so compare branching results by
+matching semantics rather than exact text. Duplicate inputs collapse; empty inputs
+are ignored beside nonempty ones, while a lone empty input emits an empty pattern
+(`^$` with `--exact`). Successful output is raw regex source plus one newline.
+
+Frak infers regexes only from positive literal examples. Its CLI has no version or
+whole-word flag, negative samples, matching/search operation, matching-text generator,
+or existing-regex optimizer. The library has a whole-word option, but the published
+CLI does not expose it.
+
+Run the direct-process, bootstrap, dependency-integrity, and prepared-offline checks
+with:
+
+```sh
+./test/frak_cli_test.sh
+```

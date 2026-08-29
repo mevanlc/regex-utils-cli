@@ -1,0 +1,12 @@
+{:mvn/local-repo ".deps/m2"
+ :mvn/repos {"central" {:url "https://repo.maven.apache.org/maven2/"}
+             "clojars" {:url "https://repo.clojars.org/"}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
+        org.clojure/spec.alpha {:mvn/version "0.5.238"}
+        org.clojure/core.specs.alpha {:mvn/version "0.4.74"}
+        org.clojure/tools.cli {:mvn/version "0.3.1"}
+        frak/frak {:mvn/version "0.1.9"
+                   :exclusions [org.clojure/clojure
+                                org.clojure/clojurescript
+                                org.clojure/tools.cli]}}
+ :aliases {:frak {:main-opts ["-m" "frak.cli"]}}}

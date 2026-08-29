@@ -1,0 +1,34 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=verify-jvm-deps
+SCRIPT_DIR=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+MANIFEST=$ROOT/jvm-deps.sha256
+
+fail() {
+    printf '%s: %s\n' "$PROGRAM" "$1" >&2
+    exit 1
+}
+
+cd "$ROOT"
+[ -f "$MANIFEST" ] || fail "missing $MANIFEST"
+[ -d .deps/m2 ] || fail "missing .deps/m2; prepare dependencies first"
+
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c "$MANIFEST" || fail "runtime artifact digest check failed"
+elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c "$MANIFEST" || fail "runtime artifact digest check failed"
+else
+    fail "required SHA-256 utility not found on PATH: sha256sum or shasum"
+fi
+
+command -v find >/dev/null 2>&1 || fail "required command not found on PATH: find"
+command -v grep >/dev/null 2>&1 || fail "required command not found on PATH: grep"
+
+find .deps/m2 -type f -name '*.jar' -print | while IFS= read -r jar; do
+    if ! grep -F "  $jar" "$MANIFEST" >/dev/null 2>&1; then
+        fail "unlisted runtime JAR: $jar"
+    fi
+done

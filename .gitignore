@@ -13,6 +13,10 @@ npm-debug.log*
 __pycache__/
 *.py[cod]
 
+# JVM and Clojure
+/.deps/
+/.cpcache/
+
 # Rust
 /target/
 

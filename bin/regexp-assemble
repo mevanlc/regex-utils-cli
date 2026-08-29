@@ -1,0 +1,341 @@
+#!/usr/bin/env perl
+
+use v5.8.1;
+use strict;
+use warnings;
+
+use Encode qw(FB_CROAK decode encode);
+use FindBin qw($Bin);
+use Getopt::Long ();
+use lib "$Bin/../local/lib/perl5";
+use re ();
+no re 'eval';
+
+my $PROGRAM = 'regexp-assemble';
+my $TOP_USAGE = <<'USAGE';
+Usage:
+  regexp-assemble assemble [OPTIONS] [PATTERN ...]
+  regexp-assemble match [OPTIONS] (--text TEXT | --text-file FILE) [PATTERN ...]
+
+Commands:
+  assemble                    Assemble patterns and print the resulting regex body
+  match                       Assemble patterns and search candidate text
+
+General options:
+  -h, --help                  Print help and exit
+  -V, --version               Print the command and module version and exit
+USAGE
+
+my $ASSEMBLE_USAGE = <<'USAGE';
+Usage: regexp-assemble assemble [OPTIONS] [PATTERN ...]
+
+Pattern input:
+  PATTERN ...                 Each argument is one pattern or literal sample
+  -i, --input FILE            Read one record per line; repeatable; use - for stdin
+
+Assembly options:
+  -l, --literal               Treat inputs as literal samples with quotemeta
+  -f, --flags FLAGS           Perl modifiers drawn from i, m, s, and x
+  -a, --anchor TYPE           none, word, line, string, or string-absolute
+      --[no-]reduce           Enable or disable tail reduction; default enabled
+      --lookahead             Enable lookahead generation
+      --unroll-plus           Enable plus-quantifier unrolling
+      --[no-]fold-meta-pairs  Fold complementary meta pairs; default enabled
+      --indent SPACES         Pretty-print with this positive indentation width
+
+General options:
+  -h, --help                  Print help and exit
+  -V, --version               Print the command and module version and exit
+USAGE
+
+my $MATCH_USAGE = <<'USAGE';
+Usage: regexp-assemble match [OPTIONS] (--text TEXT | --text-file FILE) [PATTERN ...]
+
+Pattern input:
+  PATTERN ...                 Each argument is one pattern or literal sample
+  -i, --input FILE            Read one record per line; repeatable; use - for stdin
+
+Assembly options:
+  -l, --literal               Treat inputs as literal samples with quotemeta
+  -f, --flags FLAGS           Perl modifiers drawn from i, m, s, and x
+  -a, --anchor TYPE           none, word, line, string, or string-absolute
+      --[no-]reduce           Enable or disable tail reduction; default enabled
+      --lookahead             Enable lookahead generation
+      --unroll-plus           Enable plus-quantifier unrolling
+      --[no-]fold-meta-pairs  Fold complementary meta pairs; default enabled
+      --indent SPACES         Pretty-print with this positive indentation width
+
+Match input:
+  -t, --text TEXT             Candidate text supplied as one argument
+      --text-file FILE        Read the complete candidate text from FILE
+
+General options:
+  -h, --help                  Print help and exit
+  -V, --version               Print the command and module version and exit
+USAGE
+
+binmode STDIN,  ':raw';
+binmode STDOUT, ':raw';
+binmode STDERR, ':raw';
+
+sub diagnostic {
+    my ($message, $usage_hint) = @_;
+    $message = 'unknown failure' unless defined $message && length $message;
+    $message =~ s/\s+\z//;
+    $message =~ s/\s*\n\s*/ /g;
+    print STDERR "$PROGRAM: $message\n";
+    print STDERR "Try '$PROGRAM --help' for usage.\n" if $usage_hint;
+    exit 2;
+}
+
+sub usage_error {
+    diagnostic($_[0], 1);
+}
+
+sub decode_utf8 {
+    my ($bytes, $source) = @_;
+    return $bytes if utf8::is_utf8($bytes);
+    my $decoded = eval { decode('UTF-8', $bytes, FB_CROAK) };
+    diagnostic("$source is not valid UTF-8: $@", 0) if $@;
+    return $decoded;
+}
+
+sub read_all {
+    my ($handle, $source) = @_;
+    local $/;
+    local $! = 0;
+    my $bytes = <$handle>;
+    diagnostic("cannot read $source: $!", 0) if !defined $bytes && $!;
+    return defined $bytes ? $bytes : '';
+}
+
+sub read_file {
+    my ($path, $purpose) = @_;
+    open my $handle, '<:raw', $path
+        or diagnostic("cannot open $purpose '$path': $!", 0);
+    my $bytes = read_all($handle, "$purpose '$path'");
+    close $handle or diagnostic("cannot close $purpose '$path': $!", 0);
+    return $bytes;
+}
+
+sub records_from_bytes {
+    my ($bytes, $source) = @_;
+    my $text = decode_utf8($bytes, $source);
+    my @records = split /\n/, $text, -1;
+    pop @records if @records && $records[-1] eq '';
+    s/\r\z// for @records;
+    return @records;
+}
+
+if (!@ARGV) {
+    usage_error('missing command');
+}
+if ($ARGV[0] eq '--help' || $ARGV[0] eq '-h') {
+    print STDOUT $TOP_USAGE;
+    exit 0;
+}
+
+my $top_version = $ARGV[0] eq '--version' || $ARGV[0] eq '-V';
+my $command = $top_version ? undef : shift @ARGV;
+usage_error("unknown command '$command'")
+    if defined $command && $command ne 'assemble' && $command ne 'match';
+
+my (@input_files, $literal, $flags, $anchor, $reduce, $lookahead,
+    $unroll_plus, $fold_meta_pairs, $indent, $text, $text_file, $help, $version);
+my ($flags_count, $anchor_count, $indent_count, $text_count, $text_file_count) =
+    (0, 0, 0, 0, 0);
+my ($reduce_seen, $fold_seen) = (0, 0);
+my $parse_warning = '';
+my $parser = Getopt::Long::Parser->new(
+    config => [qw(no_auto_abbrev no_ignore_case no_bundling)],
+);
+my $parsed;
+if (!$top_version) {
+    local $SIG{__WARN__} = sub { $parse_warning .= join '', @_ };
+    $parsed = $parser->getoptionsfromarray(
+        \@ARGV,
+        'input|i=s' => sub { push @input_files, $_[1] },
+        'literal|l' => \$literal,
+        'flags|f=s' => sub { $flags_count++; $flags = $_[1] },
+        'anchor|a=s' => sub { $anchor_count++; $anchor = $_[1] },
+        'reduce!' => sub { $reduce_seen++; $reduce = $_[1] },
+        'lookahead' => \$lookahead,
+        'unroll-plus' => \$unroll_plus,
+        'fold-meta-pairs!' => sub { $fold_seen++; $fold_meta_pairs = $_[1] },
+        'indent=i' => sub { $indent_count++; $indent = $_[1] },
+        'text|t=s' => sub { $text_count++; $text = $_[1] },
+        'text-file=s' => sub { $text_file_count++; $text_file = $_[1] },
+        'help|h' => \$help,
+        'version|V' => \$version,
+    );
+    if (!$parsed) {
+        $parse_warning =~ s/\s+\z//;
+        usage_error($parse_warning || 'invalid option');
+    }
+}
+
+if ($help) {
+    print STDOUT $command eq 'assemble' ? $ASSEMBLE_USAGE : $MATCH_USAGE;
+    exit 0;
+}
+
+usage_error('--flags may be supplied only once') if $flags_count > 1;
+usage_error('--anchor may be supplied only once') if $anchor_count > 1;
+usage_error('--reduce may be supplied only once') if $reduce_seen > 1;
+usage_error('--fold-meta-pairs may be supplied only once') if $fold_seen > 1;
+usage_error('--indent may be supplied only once') if $indent_count > 1;
+usage_error('--text may be supplied only once') if $text_count > 1;
+usage_error('--text-file may be supplied only once') if $text_file_count > 1;
+usage_error('PATTERN arguments and --input are mutually exclusive')
+    if @ARGV && @input_files;
+usage_error('--input - may be supplied at most once')
+    if grep({ $_ eq '-' } @input_files) > 1;
+
+$flags = '' unless defined $flags;
+usage_error("invalid flags '$flags'; use each of i, m, s, and x at most once")
+    if $flags =~ /[^imsx]/ || $flags =~ /(.).*\1/;
+$flags = join '', grep { index($flags, $_) >= 0 } qw(i m s x);
+$anchor = 'none' unless defined $anchor;
+usage_error("invalid anchor '$anchor'; use none, word, line, string, or string-absolute")
+    unless $anchor =~ /\A(?:none|word|line|string|string-absolute)\z/;
+usage_error('--indent requires an integer greater than zero')
+    if defined $indent && $indent <= 0;
+usage_error('--indent requires x in --flags')
+    if defined $indent && index($flags, 'x') < 0;
+usage_error('--indent and --lookahead are mutually exclusive')
+    if defined $indent && $lookahead;
+
+if (defined $command && $command eq 'assemble') {
+    usage_error('--text and --text-file are valid only with match')
+        if $text_count || $text_file_count;
+}
+elsif (defined $command) {
+    usage_error('match requires exactly one of --text or --text-file')
+        unless ($text_count ? 1 : 0) + ($text_file_count ? 1 : 0) == 1;
+    usage_error('--text-file - is not supported; use --text when patterns come from stdin')
+        if defined $text_file && $text_file eq '-';
+}
+
+my $dependency_ok = eval {
+    require Regexp::Assemble;
+    Regexp::Assemble->import();
+    1;
+};
+if (!$dependency_ok || !defined $Regexp::Assemble::VERSION
+        || $Regexp::Assemble::VERSION ne '0.38') {
+    diagnostic(
+        'Regexp::Assemble 0.38 is not installed; run cpanm --local-lib-contained local --installdeps .',
+        0,
+    );
+}
+if ($top_version || $version) {
+    print STDOUT "$PROGRAM (Regexp::Assemble 0.38)\n";
+    exit 0;
+}
+
+my (@patterns, @sources);
+if (@ARGV) {
+    for my $index (0 .. $#ARGV) {
+        push @patterns, decode_utf8($ARGV[$index], 'PATTERN ' . ($index + 1));
+        push @sources, 'PATTERN ' . ($index + 1);
+    }
+}
+elsif (@input_files) {
+    for my $path (@input_files) {
+        my $source = $path eq '-' ? 'stdin' : "input file '$path'";
+        my $bytes = $path eq '-' ? read_all(\*STDIN, 'stdin') : read_file($path, 'input file');
+        my @records = records_from_bytes($bytes, $source);
+        for my $index (0 .. $#records) {
+            push @patterns, $records[$index];
+            push @sources, "$source line " . ($index + 1);
+        }
+    }
+}
+else {
+    usage_error('no patterns supplied') if -t STDIN;
+    my @records = records_from_bytes(read_all(\*STDIN, 'stdin'), 'stdin');
+    for my $index (0 .. $#records) {
+        push @patterns, $records[$index];
+        push @sources, 'stdin line ' . ($index + 1);
+    }
+}
+usage_error('no patterns supplied') unless @patterns;
+for my $index (0 .. $#patterns) {
+    usage_error("$sources[$index] is empty") unless length $patterns[$index];
+}
+
+my $candidate;
+if ($command eq 'match') {
+    $candidate = $text_count
+        ? decode_utf8($text, '--text')
+        : decode_utf8(read_file($text_file, 'text file'), "text file '$text_file'");
+}
+
+my $assembler = eval { Regexp::Assemble->new(chomp => 0, flags => $flags) };
+diagnostic("cannot create assembler: $@", 0) if $@ || !defined $assembler;
+
+my $configured = eval {
+    $assembler->anchor_word(1) if $anchor eq 'word';
+    $assembler->anchor_line(1) if $anchor eq 'line';
+    $assembler->anchor_string(1) if $anchor eq 'string';
+    $assembler->anchor_string_absolute(1) if $anchor eq 'string-absolute';
+    $assembler->reduce($reduce) if $reduce_seen;
+    $assembler->lookahead(1) if $lookahead;
+    $assembler->unroll_plus(1) if $unroll_plus;
+    $assembler->fold_meta_pairs($fold_meta_pairs) if $fold_seen;
+    $assembler->indent($indent) if defined $indent;
+    1;
+};
+diagnostic("cannot configure assembler: $@", 0) unless $configured;
+
+for my $index (0 .. $#patterns) {
+    my $pattern = $literal ? quotemeta($patterns[$index]) : $patterns[$index];
+    my $compile_pattern = $pattern;
+    $compile_pattern .= "\n" if index($flags, 'x') >= 0;
+    my $scoped = length($flags) ? "(?$flags:$compile_pattern)" : $pattern;
+    my $compile_error;
+    {
+        local $SIG{__WARN__} = sub { die @_ };
+        eval { qr/$scoped/ };
+        $compile_error = $@;
+    }
+    diagnostic("$sources[$index] is not a valid Perl regular expression: $compile_error", 0)
+        if $compile_error;
+    my $added = eval { $assembler->add($pattern); 1 };
+    diagnostic("cannot add $sources[$index]: $@", 0) unless $added;
+}
+
+if ($command eq 'match') {
+    my ($matched, $match_error);
+    {
+        local $SIG{__WARN__} = sub { die @_ };
+        $matched = eval { $assembler->match($candidate) };
+        $match_error = $@;
+    }
+    diagnostic("matching failed: $match_error", 0) if $match_error;
+    exit 1 unless $matched;
+    my $substring = $assembler->mvar(0);
+    diagnostic('matching failed: upstream returned no matched substring', 0)
+        unless defined $substring;
+    my $output = eval { encode('UTF-8', "$substring\n", FB_CROAK) };
+    diagnostic("cannot encode matched substring: $@", 0) if $@;
+    print STDOUT $output or diagnostic("cannot write stdout: $!", 0);
+    exit 0;
+}
+
+my ($compiled, $assembly_error);
+{
+    local $SIG{__WARN__} = sub { die @_ };
+    $compiled = eval { $assembler->re };
+    $assembly_error = $@;
+}
+diagnostic("assembly failed: $assembly_error", 0) if $assembly_error;
+diagnostic('assembly failed: upstream returned no regular expression', 0)
+    unless re::is_regexp($compiled);
+my ($body) = re::regexp_pattern($compiled);
+diagnostic('assembly failed: upstream returned no regular expression', 0)
+    unless defined $body;
+my $output = eval { encode('UTF-8', "$body\n", FB_CROAK) };
+diagnostic("cannot encode assembled pattern: $@", 0) if $@;
+print STDOUT $output or diagnostic("cannot write stdout: $!", 0);
+exit 0;

@@ -4,26 +4,26 @@ Project-local command-line exercises for regex-related libraries across several
 language ecosystems. Each command stays close to its upstream library's public API;
 the implementation plans and verified limitations are under [`devdocs/`](devdocs/).
 
-## Regexp::Optimizer
+## Perl setup
 
-`bin/regexp-optimizer` compiles one Perl regex body, passes it through
-`Regexp::Optimizer` once, and prints the optimized pattern for piping or inspection.
-
-### Setup
-
-Requirements:
+The Perl commands share one exact, project-local dependency manifest. Requirements:
 
 - Perl
 - `cpanm`
 
-Install the exact dependencies into the ignored project-local `local/` tree:
+Install into the ignored `local/` tree:
 
 ```sh
 cpanm --local-lib-contained local --installdeps .
 ```
 
-No global Perl modules are required. The executable finds `local/lib/perl5` relative
-to its own path, so it can be invoked from another working directory.
+No global Perl modules are required. Each executable finds `local/lib/perl5`
+relative to its own path, so it can be invoked from another working directory.
+
+## Regexp::Optimizer
+
+`bin/regexp-optimizer` compiles one Perl regex body, passes it through
+`Regexp::Optimizer` once, and prints the optimized pattern for piping or inspection.
 
 ### Usage
 
@@ -77,11 +77,73 @@ The wrapper does not enable `re 'eval'`. User patterns containing executable reg
 are rejected by Perl rather than executed. Matching-text generation, sample-to-regex
 inference, and a matching/search command are outside this library's interface.
 
+## Regexp::Assemble
+
+`bin/regexp-assemble` exercises Regexp::Assemble 0.38 through two operations:
+assembling multiple Perl regex bodies and searching candidate text with the resulting
+untracked regex.
+
+```text
+Usage:
+  regexp-assemble assemble [OPTIONS] [PATTERN ...]
+  regexp-assemble match [OPTIONS] (--text TEXT | --text-file FILE) [PATTERN ...]
+
+Pattern input:
+  PATTERN ...                 Each argument is one pattern or literal sample
+  -i, --input FILE            Read one record per line; repeatable; use - for stdin
+
+Assembly options:
+  -l, --literal               Treat inputs as literal samples with quotemeta
+  -f, --flags FLAGS           Perl modifiers drawn from i, m, s, and x
+  -a, --anchor TYPE           none, word, line, string, or string-absolute
+      --[no-]reduce           Enable or disable tail reduction; default enabled
+      --lookahead             Enable lookahead generation
+      --unroll-plus           Enable plus-quantifier unrolling
+      --[no-]fold-meta-pairs  Fold complementary meta pairs; default enabled
+      --indent SPACES         Pretty-print with this positive indentation width
+
+Match input:
+  -t, --text TEXT             Candidate text supplied as one argument
+      --text-file FILE        Read the complete candidate text from FILE
+```
+
+Choose positional records, repeatable input files, or stdin—not a mixture. Files and
+stdin contain LF-delimited strict UTF-8 records; a preceding CR is removed, a final
+record need not end in LF, and blank patterns are rejected. Positional arguments are
+already individual records and may contain newlines. Regex mode accepts Perl regex
+bodies rather than `/.../flags` syntax. `--literal` instead quotes each record once,
+making the command a literal-sample inference surface.
+
+```console
+$ printf '%s\n' foobar fooxar foozap | bin/regexp-assemble assemble
+foo(?:[bx]ar|zap)
+
+$ bin/regexp-assemble assemble --literal 'a.b' 'a-b'
+a[-.]b
+
+$ bin/regexp-assemble match --text xxfooxaryy foobar fooxar foozap
+fooxar
+```
+
+The anchor choices map directly to the library's word, line, string (`\A...\Z`),
+and absolute-string (`\A...\z`) methods. Indentation requires `--flags x` and cannot
+be combined with lookahead. A non-match exits 1 with no output; successful matches
+print the exact matched substring. All usage, input, dependency, regex, and assembly
+failures exit 2.
+
+The command deliberately does not expose tracking because Regexp::Assemble implements
+tracked patterns with embedded Perl code and `re 'eval'`. The default lexer can
+mishandle nested parentheses, and upstream warns that meta-pair folding under `s` and
+some lookahead expressions can be incorrect. Disabling reduction is a diagnostic aid,
+not a general correctness guarantee. Every emitted assembly is nevertheless compiled
+by the library before it is printed.
+
 ### Tests
 
 ```sh
 PERL5LIB=local/lib/perl5 perl -MRegexp::Optimizer -MRegexp::Assemble -e \
   'die unless $Regexp::Optimizer::VERSION eq q{0.23} && $Regexp::Assemble::VERSION eq q{0.38}'
 perl -c bin/regexp-optimizer
-prove -v t/regexp-optimizer.t
+perl -c bin/regexp-assemble
+prove -v t
 ```

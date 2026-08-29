@@ -4,6 +4,7 @@ version = "0.0.0"
 requires-python = ">=3.10"
 dependencies = [
   "regexfinder",
+  "triegex",
 ]
 
 [tool.uv]
@@ -11,3 +12,14 @@ package = false
 
 [tool.uv.sources]
 regexfinder = { git = "https://github.com/mevanlc/regexfinder.git", rev = "88b50c683f77c68ff232f75e111ea6650940c4b5" }
+triegex = { git = "https://github.com/ZhukovAlexander/triegex.git", rev = "85a25240b8821c2da257e6f6b784023e56a5b680" }
+
+[tool.uv.extra-build-dependencies]
+triegex = [
+  "setuptools==84.0.0",
+  "setuptools-scm==10.2.1",
+  "packaging==26.3",
+  "vcs-versioning==2.3.1",
+  "tomli==2.4.1; python_version < '3.11'",
+  "typing-extensions==4.16.0; python_version < '3.11'",
+]

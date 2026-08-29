@@ -126,7 +126,12 @@ def compact_json(value: object) -> str:
 def write_stdout(output: str) -> None:
     try:
         data = output.encode("utf-8", errors="strict")
-        os.write(sys.stdout.fileno(), data)
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(sys.stdout.fileno(), remaining)
+            if written <= 0:
+                raise OSError("short write to stdout")
+            remaining = remaining[written:]
     except BrokenPipeError:
         try:
             devnull = os.open(os.devnull, os.O_WRONLY)

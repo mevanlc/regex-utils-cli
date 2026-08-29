@@ -584,3 +584,59 @@ random-string property is defective, the only visualization API writes a PDF and
 launches a viewer, and the unfinished word collector is not stable sample inference,
 so none is exposed. This wrapper does not repair those behaviors or isolate CPU,
 memory, or regex-backtracking risks.
+
+## triegex
+
+`bin/triegex` exercises ZhukovAlexander/triegex 0.0.4 at immutable commit
+`85a25240b8821c2da257e6f6b784023e56a5b680`. The unpublished Git release needs a
+temporary `collections.MutableSet` compatibility alias on modern Python; the command
+installs that alias only while importing the package and restores the previous state.
+
+```text
+Usage:
+  triegex build [OPTIONS] [WORD...]
+  triegex contains [OPTIONS] [WORD...]
+  triegex match [OPTIONS] [WORD...]
+
+Word input:
+  WORD...                          Words as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited words; use - for stdin
+
+Candidate input for contains/match:
+  -c, --candidate TEXT            Candidate text; repeatable
+  -C, --candidate-input FILE      Read LF/CRLF-delimited candidates; use - for stdin
+
+Match output:
+  -b, --boolean                   Report only whether each candidate has a match
+```
+
+Word and candidate files use the same strict-UTF-8 record rules as `regexfinder`.
+`build` writes the exact `to_regex()` result; `contains` checks exact terminal
+membership without generating a regex; and `match` compiles the generated source with
+Python `re` and reports either detailed spans or booleans.
+
+```console
+$ uv run --frozen -- ./bin/triegex build foo bar baz
+(?:ba(?:r\b|z\b)|foo\b|~^(?#match nothing))
+
+$ uv run --frozen -- ./bin/triegex contains foo bar --candidate foo --candidate food
+{"candidate":"foo","contains":true}
+{"candidate":"food","contains":false}
+
+$ printf 'food foo bar!\nnone\n' | \
+    uv run --frozen -- ./bin/triegex match foo bar --candidate-input - --boolean
+{"candidate":"food foo bar!","matched":true}
+{"candidate":"none","matched":false}
+```
+
+Rendering is deterministic and sorted, and always includes the
+`~^(?#match nothing)` branch. Every terminal word receives `\b`, so matching is
+case-sensitive and unanchored but requires a trailing Unicode word boundary. A word
+ending in punctuation or emoji can therefore be contained without matching itself.
+
+Inputs are inserted as raw regex syntax, not escaped literals: `a.b` can match `axb`,
+`a*b` can match `b`, and unmatched `(` or `[` can make `match` fail even though
+`build` and `contains` succeed. The command deliberately does not expose the package's
+defective iterator or `discard()` behavior. It also does not optimize existing regexes,
+generate matching text, add flags, provide safe-literal inference, or isolate resource
+use and regex backtracking.

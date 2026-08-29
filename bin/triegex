@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import argparse
+import collections
+from collections.abc import MutableSet
+import importlib
+import importlib.metadata
+import json
+from pathlib import Path
+import re
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from python_cli import (  # noqa: E402
+    StoreOnce,
+    StoreTrueOnce,
+    StrictArgumentParser,
+    compact_json,
+    read_records,
+    run_cli,
+    runtime_error,
+    stdin_is_terminal,
+    usage_error,
+    write_stdout,
+)
+
+PROGRAM = "triegex"
+VERSION = "0.0.4"
+SOURCE_URL = "https://github.com/ZhukovAlexander/triegex.git"
+COMMIT = "85a25240b8821c2da257e6f6b784023e56a5b680"
+BOOTSTRAP_ERROR = "pinned triegex 0.0.4 is unavailable; run uv sync --frozen"
+COMMANDS = {"build", "contains", "match"}
+
+TOP_HELP = """Usage:
+  triegex build [OPTIONS] [WORD...]
+  triegex contains [OPTIONS] [WORD...]
+  triegex match [OPTIONS] [WORD...]
+
+Commands:
+  build                           Print the exact trie-generated Python regex
+  contains                        Check exact trie membership
+  match                           Search candidates with the generated regex
+
+General options:
+  -h, --help                      Print help and exit
+  -V, --version                   Print dependency version and pinned commit
+"""
+
+
+def command_help(command: str) -> str:
+    candidates = "" if command == "build" else """
+Candidate input:
+  -c, --candidate TEXT            Candidate text; repeatable
+  -C, --candidate-input FILE      Read LF/CRLF-delimited candidates; use - for stdin
+"""
+    boolean = "" if command != "match" else """
+Match output:
+  -b, --boolean                   Report only whether each candidate has a match
+"""
+    return f"""Usage: triegex {command} [OPTIONS] [WORD...]
+
+Word input:
+  WORD...                          Words as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited words; use - for stdin
+{candidates}{boolean}
+General options:
+  -h, --help                      Print help and exit
+"""
+
+
+def dependency():
+    prior_exists = hasattr(collections, "MutableSet")
+    prior = getattr(collections, "MutableSet", None)
+    try:
+        distribution = importlib.metadata.distribution("triegex")
+        if distribution.version != VERSION:
+            raise ValueError("wrong version")
+        direct = json.loads(distribution.read_text("direct_url.json") or "")
+        vcs = direct.get("vcs_info", {})
+        if direct.get("url") != SOURCE_URL or vcs.get("commit_id") != COMMIT:
+            raise ValueError("wrong source")
+        if not prior_exists:
+            collections.MutableSet = MutableSet
+        module = importlib.import_module("triegex")
+        Triegex = module.Triegex
+        if not callable(Triegex):
+            raise TypeError("invalid API")
+        Triegex()
+        return Triegex
+    except Exception:
+        runtime_error(BOOTSTRAP_ERROR)
+    finally:
+        if prior_exists:
+            collections.MutableSet = prior
+        elif hasattr(collections, "MutableSet"):
+            del collections.MutableSet
+
+
+def parse_command(command: str, arguments: list[str]):
+    parser = StrictArgumentParser(prog=f"{PROGRAM} {command}")
+    parser.add_argument("-i", "--input", action=StoreOnce)
+    if command != "build":
+        parser.add_argument("-c", "--candidate", action="append")
+        parser.add_argument("-C", "--candidate-input", action=StoreOnce)
+    if command == "match":
+        parser.add_argument("-b", "--boolean", action=StoreTrueOnce, default=False)
+    parser.add_argument("words", nargs="*")
+    return parser.parse_args(arguments)
+
+
+def collect_words(values: argparse.Namespace) -> tuple[list[str], bool]:
+    if values.words and values.input is not None:
+        usage_error("WORD operands and --input are mutually exclusive")
+    if values.words:
+        return values.words, False
+    if values.input is not None:
+        return read_records(
+            values.input,
+            "stdin" if values.input == "-" else f"input file '{values.input}'",
+        ), values.input == "-"
+    if stdin_is_terminal():
+        usage_error("no words supplied")
+    return read_records("-", "stdin"), True
+
+
+def collect_candidates(values: argparse.Namespace) -> tuple[list[str], bool]:
+    arguments = values.candidate
+    pathname = values.candidate_input
+    families = (arguments is not None) + (pathname is not None)
+    if families != 1:
+        usage_error("requires exactly one candidate source")
+    if arguments is not None:
+        return arguments, False
+    candidates = read_records(
+        pathname,
+        "stdin" if pathname == "-" else f"candidate file '{pathname}'",
+    )
+    if not candidates:
+        runtime_error("candidate input contains no records")
+    return candidates, pathname == "-"
+
+
+def match_record(candidate: str, match: re.Match[str]) -> dict[str, object]:
+    return {
+        "text": match.group(0),
+        "start": match.start(),
+        "end": match.end(),
+        "groups": list(match.groups()),
+        "groupdict": match.groupdict(),
+    }
+
+
+def operate(command: str, words: list[str], candidates: list[str] | None,
+            boolean: bool = False) -> str:
+    Triegex = dependency()
+    try:
+        trie = Triegex(*words)
+        if command == "build":
+            return trie.to_regex() + "\n"
+        if command == "contains":
+            records = [
+                compact_json({"candidate": candidate, "contains": candidate in trie})
+                for candidate in candidates
+            ]
+            return "\n".join(records) + "\n"
+        source = trie.to_regex()
+        compiled = re.compile(source)
+        records = []
+        for candidate in candidates:
+            iterator = compiled.finditer(candidate)
+            if boolean:
+                records.append(compact_json({"candidate": candidate, "matched": next(iterator, None) is not None}))
+            else:
+                matches = [match_record(candidate, match) for match in iterator]
+                records.append(compact_json({
+                    "candidate": candidate,
+                    "matched": bool(matches),
+                    "matches": matches,
+                }))
+        return "\n".join(records) + "\n"
+    except Exception as error:
+        runtime_error(f"{command} failed: {error}")
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    if arguments and arguments[0] in {"-h", "--help"}:
+        if len(arguments) != 1:
+            usage_error("--help accepts no command or operands")
+        write_stdout(TOP_HELP)
+        return
+    if arguments and arguments[0] in {"-V", "--version"}:
+        if len(arguments) != 1:
+            usage_error("--version accepts no command or operands")
+        dependency()
+        write_stdout(f"{PROGRAM} {VERSION} (ZhukovAlexander/triegex {COMMIT})\n")
+        return
+    if not arguments:
+        usage_error("missing command")
+    command = arguments.pop(0)
+    if command not in COMMANDS:
+        usage_error(f"unknown command '{command}'")
+    if arguments and arguments[0] in {"-h", "--help"}:
+        if len(arguments) != 1:
+            usage_error("--help accepts no other options or operands")
+        write_stdout(command_help(command))
+        return
+    values = parse_command(command, arguments)
+    words, words_stdin = collect_words(values)
+    candidates = None
+    if command != "build":
+        candidates, candidates_stdin = collect_candidates(values)
+        if words_stdin and candidates_stdin:
+            usage_error("word and candidate input cannot both read stdin")
+    write_stdout(operate(command, words, candidates, getattr(values, "boolean", False)))
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_cli(PROGRAM, main))

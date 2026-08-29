@@ -312,3 +312,74 @@ Unknown options and extra operands are silently ignored upstream, and not every
 parsed construct is supported by automaton conversion. Output may include ANSI
 styling even when redirected; use `FORCE_COLOR=0` for deterministic output. This
 CLI does not expose matching, sample inference, or matching-text generation.
+
+## oniguruma-parser
+
+`bin/oniguruma-parser` exercises oniguruma-parser 0.12.2 through parsing,
+canonical regeneration, read-only traversal, and optimization.
+
+```text
+Usage:
+  oniguruma-parser parse [OPTIONS] [PATTERN]
+  oniguruma-parser roundtrip [OPTIONS] [PATTERN]
+  oniguruma-parser traverse [OPTIONS] [PATTERN]
+  oniguruma-parser optimize [OPTIONS] [PATTERN]
+
+Pattern input:
+  PATTERN                         Oniguruma pattern body as one argument
+  -i, --input FILE                Read the complete pattern from FILE; use - for stdin
+
+Oniguruma options:
+  -f, --flags FLAGS               Top-level Oniguruma flags; default empty
+      --capture-group             Enable the captureGroup compile-time rule
+      --singleline                Enable the singleline compile-time rule
+
+Optimizer-only options:
+      --allow-orphan-backrefs     Skip orphan-backreference validation
+      --disable-optimization NAME Disable one optional transform; repeatable
+```
+
+Patterns are bodies, not slash-delimited literals. Choose one positional pattern,
+one complete file, or stdin. File and stdin bytes are decoded as strict UTF-8 and
+are not trimmed or split; empty patterns, NUL, whitespace, and final newlines are
+preserved. Top-level flags are separate and passed unchanged. Supported atoms are
+`i`, `m`, `x`, `D`, `P`, `S`, `W`, `y{g}`, and `y{w}`; Oniguruma `m` means dotAll,
+not multiline anchors. `--singleline` separately changes `^` and `$` assertions.
+
+All successful output is two-space-indented JSON. Unbounded quantifier maxima use
+the string `"Infinity"` so JSON does not lose them as `null`.
+
+```console
+$ npm run --silent oniguruma-parser -- roundtrip 'a{1,}'
+{
+  "pattern": "a+",
+  "flags": ""
+}
+
+$ printf %s '^.*' | npm run --silent oniguruma-parser -- traverse
+{
+  "total": 6,
+  "byType": {
+    "Alternative": 1,
+    "Assertion": 1,
+    "CharacterSet": 1,
+    "Flags": 1,
+    "Quantifier": 1,
+    "Regex": 1
+  }
+}
+
+$ npm run --silent oniguruma-parser -- optimize \
+    '(?x) (?:\!{1,}) (\b(?:ark|arm|art)\b) [[^0-9A-Fa-f]\P{^Nd}\p{ Letter }]'
+{
+  "pattern": "!+\\b(ar[kmt])\\b[\\H\\d\\p{L}]",
+  "flags": ""
+}
+```
+
+Optimization names are validated against the installed package before individual
+transforms can be disabled. The parser models Oniguruma 6.9.10 and Unicode 16.0.0;
+it intentionally rejects conditionals, non-built-in callouts, and other rare syntax.
+It parses and transforms syntax only: it does not execute Oniguruma regexes, convert
+them to JavaScript, infer patterns, generate matches, expose arbitrary visitors, or
+accept mutable AST JSON.

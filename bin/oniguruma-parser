@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+
+import {fileURLToPath} from 'node:url';
+import {parseArgs} from 'node:util';
+import {
+  CliError,
+  errorMessage,
+  findPackageMetadata,
+  readInput,
+  rejectRepeatedOptions,
+  runCli,
+  runtimeError,
+  usageError,
+  writeStdout,
+} from '../lib/node-cli.js';
+
+const program = 'oniguruma-parser';
+const commands = new Set(['parse', 'roundtrip', 'traverse', 'optimize']);
+const topHelp = `Usage:
+  oniguruma-parser parse [OPTIONS] [PATTERN]
+  oniguruma-parser roundtrip [OPTIONS] [PATTERN]
+  oniguruma-parser traverse [OPTIONS] [PATTERN]
+  oniguruma-parser optimize [OPTIONS] [PATTERN]
+
+Commands:
+  parse                         Parse an Oniguruma pattern body into an AST
+  roundtrip                     Parse and regenerate a canonical pattern
+  traverse                      Count AST nodes by type
+  optimize                      Optimize and regenerate a pattern
+
+General options:
+  -h, --help                    Print help and exit
+  -V, --version                 Print command and package version and exit
+`;
+
+function commandHelp(command) {
+  const optimizer = command === 'optimize' ? `
+Optimizer-only options:
+      --allow-orphan-backrefs     Skip orphan-backreference validation
+      --disable-optimization NAME Disable one optional transform; repeatable
+` : '';
+  return `Usage: oniguruma-parser ${command} [OPTIONS] [PATTERN]
+
+Pattern input:
+  PATTERN                         Oniguruma pattern body as one argument
+  -i, --input FILE                Read the complete pattern from FILE; use - for stdin
+
+Oniguruma options:
+  -f, --flags FLAGS               Top-level Oniguruma flags; default empty
+      --capture-group             Enable the captureGroup compile-time rule
+      --singleline                Enable the singleline compile-time rule
+${optimizer}
+General options:
+  -h, --help                      Print help and exit
+`;
+}
+
+function parseCommandArgs(args) {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      strict: true,
+      tokens: true,
+      options: {
+        input: {type: 'string', short: 'i'},
+        flags: {type: 'string', short: 'f'},
+        'capture-group': {type: 'boolean'},
+        singleline: {type: 'boolean'},
+        'allow-orphan-backrefs': {type: 'boolean'},
+        'disable-optimization': {type: 'string', multiple: true},
+        help: {type: 'boolean', short: 'h'},
+        version: {type: 'boolean', short: 'V'},
+      },
+    });
+  } catch (error) {
+    usageError(errorMessage(error));
+  }
+}
+
+async function loadDependency(command) {
+  try {
+    const entry = fileURLToPath(import.meta.resolve('oniguruma-parser'));
+    const metadata = await findPackageMetadata(entry, 'oniguruma-parser');
+    if (metadata.version !== '0.12.2') {
+      throw new Error('wrong version');
+    }
+    const root = await import('oniguruma-parser');
+    if (typeof root.toOnigurumaAst !== 'function') {
+      throw new Error('missing parser API');
+    }
+    const api = {toOnigurumaAst: root.toOnigurumaAst};
+    if (command === 'roundtrip') {
+      const generator = await import('oniguruma-parser/generator');
+      if (typeof generator.generate !== 'function') throw new Error('missing generator API');
+      api.generate = generator.generate;
+    }
+    if (command === 'traverse') {
+      const traverser = await import('oniguruma-parser/traverser');
+      if (typeof traverser.traverse !== 'function') throw new Error('missing traverser API');
+      api.traverse = traverser.traverse;
+    }
+    if (command === 'optimize' || command === 'version') {
+      const optimizer = await import('oniguruma-parser/optimizer');
+      if (typeof optimizer.optimize !== 'function' ||
+          typeof optimizer.getOptionalOptimizations !== 'function') {
+        throw new Error('missing optimizer API');
+      }
+      api.optimize = optimizer.optimize;
+      api.getOptionalOptimizations = optimizer.getOptionalOptimizations;
+    }
+    return api;
+  } catch {
+    runtimeError('oniguruma-parser 0.12.2 is not installed; run npm ci');
+  }
+}
+
+function jsonOutput(value) {
+  try {
+    return `${JSON.stringify(
+      value,
+      (_key, item) => item === Number.POSITIVE_INFINITY ? 'Infinity' : item,
+      2,
+    )}\n`;
+  } catch (error) {
+    runtimeError(`cannot serialize output: ${errorMessage(error)}`);
+  }
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv[0] === '--help' || argv[0] === '-h') {
+    if (argv.length !== 1) usageError('--help accepts no command or operands');
+    await writeStdout(topHelp);
+    return;
+  }
+  if (argv[0] === '--version' || argv[0] === '-V') {
+    if (argv.length !== 1) usageError('--version accepts no command or operands');
+    await loadDependency('version');
+    await writeStdout('oniguruma-parser 0.12.2\n');
+    return;
+  }
+  if (argv.length === 0) usageError('missing command');
+  const command = argv.shift();
+  if (!commands.has(command)) usageError(`unknown command '${command}'`);
+
+  const parsed = parseCommandArgs(argv);
+  rejectRepeatedOptions(parsed.tokens, new Set(['disable-optimization']));
+  const {values, positionals} = parsed;
+  if (values.version) usageError('--version is available only at the top level');
+  if (values.help) {
+    const otherOptions = parsed.tokens.filter(
+      (token) => token.kind === 'option' && token.name !== 'help',
+    );
+    if (otherOptions.length || positionals.length) {
+      usageError('--help accepts no other options or operands');
+    }
+    await writeStdout(commandHelp(command));
+    return;
+  }
+  if (positionals.length > 1) usageError('only one PATTERN may be supplied');
+  if (positionals.length && values.input !== undefined) {
+    usageError('PATTERN and --input are mutually exclusive');
+  }
+  const optimizerOptionsPresent = values['allow-orphan-backrefs'] ||
+    values['disable-optimization'] !== undefined;
+  if (command !== 'optimize' && optimizerOptionsPresent) {
+    usageError('optimizer-only options are valid only with optimize');
+  }
+
+  let pattern;
+  if (positionals.length) {
+    pattern = positionals[0];
+  } else if (values.input !== undefined) {
+    const label = values.input === '-' ? 'stdin' : `input file '${values.input}'`;
+    pattern = await readInput(values.input, label);
+  } else {
+    if (process.stdin.isTTY) usageError('no pattern supplied');
+    pattern = await readInput('-', 'stdin');
+  }
+
+  const api = await loadDependency(command);
+  const disableNames = values['disable-optimization'] ?? [];
+  let override;
+  if (command === 'optimize') {
+    const available = new Set(Object.keys(api.getOptionalOptimizations()));
+    const seen = new Set();
+    for (const name of disableNames) {
+      if (seen.has(name)) usageError(`optimization '${name}' may be disabled only once`);
+      if (!available.has(name)) usageError(`unknown optimization '${name}'`);
+      seen.add(name);
+    }
+    if (seen.size) {
+      override = Object.fromEntries([...seen].map((name) => [name, false]));
+    }
+  }
+
+  const rules = {};
+  if (values['capture-group']) rules.captureGroup = true;
+  if (values.singleline) rules.singleline = true;
+  if (command === 'optimize' && values['allow-orphan-backrefs']) {
+    rules.allowOrphanBackrefs = true;
+  }
+  const flags = values.flags ?? '';
+
+  let result;
+  try {
+    if (command === 'optimize') {
+      const options = {flags, rules};
+      if (override) options.override = override;
+      result = api.optimize(pattern, options);
+    } else {
+      const ast = api.toOnigurumaAst(pattern, {flags, rules});
+      if (command === 'parse') {
+        result = ast;
+      } else if (command === 'roundtrip') {
+        result = api.generate(ast);
+      } else {
+        const byType = {};
+        let total = 0;
+        api.traverse(ast, {
+          '*': ({node}) => {
+            total += 1;
+            byType[node.type] = (byType[node.type] ?? 0) + 1;
+          },
+        });
+        result = {
+          total,
+          byType: Object.fromEntries(Object.entries(byType).sort(([left], [right]) =>
+            left.localeCompare(right))),
+        };
+      }
+    }
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    runtimeError(errorMessage(error));
+  }
+  await writeStdout(jsonOutput(result));
+}
+
+await runCli(program, main);

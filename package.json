@@ -1,12 +1,19 @@
 {
   "name": "regex-utils-cli",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "oniguruma-parser": "node ./bin/oniguruma-parser",
     "regexp-tree": "node ./node_modules/regexp-tree-cli/bin/regexp-tree-cli",
     "test": "node --test",
+    "test:oniguruma-parser": "node --test test/oniguruma-parser.test.js",
     "test:regexp-tree": "node --test test/regexp-tree-cli.test.js"
   },
   "dependencies": {
+    "oniguruma-parser": "0.12.2",
     "regexp-tree-cli": "0.0.21"
   }
 }

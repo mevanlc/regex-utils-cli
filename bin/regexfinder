@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import contextlib
+import importlib.metadata
+import io
+import json
+import math
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from python_cli import (  # noqa: E402
+    CliError,
+    StoreOnce,
+    StoreTrueOnce,
+    StrictArgumentParser,
+    compact_json,
+    read_records,
+    run_cli,
+    runtime_error,
+    stdin_is_terminal,
+    usage_error,
+    write_stdout,
+)
+
+PROGRAM = "regexfinder"
+VERSION = "0.0.0"
+SOURCE_URL = "https://github.com/mevanlc/regexfinder.git"
+COMMIT = "88b50c683f77c68ff232f75e111ea6650940c4b5"
+BOOTSTRAP_ERROR = (
+    "pinned mevanlc/regexfinder dependency is unavailable; run uv sync --frozen"
+)
+COMMANDS = {"analyze", "optimize", "search"}
+
+TOP_HELP = """Usage:
+  regexfinder analyze [OPTIONS] PATTERN
+  regexfinder optimize [OPTIONS] PATTERN
+  regexfinder search [OPTIONS] PATTERN [TEXT...]
+
+Commands:
+  analyze                         Report graph rendering and objective metrics
+  optimize                        Run one phi-reduction pass
+  search                          Search ordered candidate strings with NODE.match()
+
+General options:
+  -h, --help                      Print help and exit
+  -V, --version                   Print dependency version and pinned commit
+"""
+
+
+def command_help(command: str) -> str:
+    graph = "" if command == "search" else """
+Graph options:
+  -a, --alpha NUMBER              Non-negative finite objective weight; default 1
+"""
+    search = "" if command != "search" else """
+Candidate input:
+  TEXT...                          Candidate strings as separate arguments
+  -i, --input FILE                Read LF/CRLF-delimited candidates; use - for stdin
+  -b, --boolean                   Report only whether each candidate has a match
+"""
+    verbose = "" if command != "optimize" else """
+Optimization diagnostics:
+  -v, --verbose                   Replay captured upstream diagnostics on stderr
+"""
+    operands = " PATTERN [TEXT...]" if command == "search" else " PATTERN"
+    return f"""Usage: regexfinder {command} [OPTIONS]{operands}
+
+Pattern input:
+  PATTERN                          Complete Python regex body
+{graph}{search}{verbose}
+General options:
+  -h, --help                      Print help and exit
+"""
+
+
+def dependency():
+    try:
+        distribution = importlib.metadata.distribution("regexfinder")
+        if distribution.version != VERSION:
+            raise ValueError("wrong version")
+        direct = json.loads(distribution.read_text("direct_url.json") or "")
+        vcs = direct.get("vcs_info", {})
+        if direct.get("url") != SOURCE_URL or vcs.get("commit_id") != COMMIT:
+            raise ValueError("wrong source")
+        from regexfinder import GRAPH, NODE
+
+        if not callable(GRAPH) or not callable(NODE):
+            raise TypeError("invalid API")
+        return GRAPH, NODE
+    except Exception:
+        runtime_error(BOOTSTRAP_ERROR)
+
+
+def parse_alpha(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError:
+        usage_error("--alpha must be a non-negative finite decimal number")
+    if number < 0 or not math.isfinite(number):
+        usage_error("--alpha must be a non-negative finite decimal number")
+    return number
+
+
+def parse_command(command: str, arguments: list[str]):
+    parser = StrictArgumentParser(prog=f"{PROGRAM} {command}")
+    if command in {"analyze", "optimize"}:
+        parser.add_argument("-a", "--alpha", action=StoreOnce, default="1")
+        if command == "optimize":
+            parser.add_argument("-v", "--verbose", action=StoreTrueOnce, default=False)
+        parser.add_argument("pattern", nargs="?")
+        parser.add_argument("extra", nargs="*")
+    else:
+        parser.add_argument("-i", "--input", action=StoreOnce)
+        parser.add_argument("-b", "--boolean", action=StoreTrueOnce, default=False)
+        parser.add_argument("pattern", nargs="?")
+        parser.add_argument("texts", nargs="*")
+    values = parser.parse_args(arguments)
+    if values.pattern is None:
+        usage_error("missing PATTERN")
+    if command in {"analyze", "optimize"}:
+        if values.extra:
+            usage_error("unexpected extra operands")
+        values.alpha = parse_alpha(values.alpha)
+    return values
+
+
+def scalar(value: object) -> int | float:
+    if hasattr(value, "item"):
+        value = value.item()
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        runtime_error("graph returned a non-numeric metric")
+    if isinstance(value, float) and not math.isfinite(value):
+        runtime_error("graph returned a non-finite metric")
+    return value
+
+
+def snapshot(graph: object) -> dict[str, object]:
+    return {
+        "out_regex": graph.outRegex,
+        "cardinality": int(scalar(graph.cardinality)),
+        "log2_cardinality": float(scalar(graph.log2Cardinality)),
+        "entropy": float(scalar(graph.entropy)),
+        "complexity": int(scalar(graph.K)),
+        "phi": float(scalar(graph.phi)),
+    }
+
+
+def graph_operation(command: str, pattern: str, alpha: float, verbose: bool = False) -> str:
+    GRAPH, _ = dependency()
+    captured = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(captured):
+            graph = GRAPH(regex=pattern, alpha=alpha)
+            graph.partition()
+            before = snapshot(graph)
+            if command == "optimize":
+                graph.reducePhi()
+                after = snapshot(graph)
+    except CliError:
+        raise
+    except Exception as error:
+        runtime_error(f"{command} failed: {error}")
+
+    if command == "analyze":
+        result = {"input_regex": pattern, "alpha": alpha, "graph": before}
+    else:
+        result = {
+            "input_regex": pattern,
+            "alpha": alpha,
+            "before": before,
+            "after": after,
+            "changed": before["out_regex"] != after["out_regex"],
+        }
+        if verbose:
+            for line in captured.getvalue().splitlines():
+                sys.stderr.write(f"{PROGRAM}: upstream: {line}\n")
+    try:
+        return compact_json(result) + "\n"
+    except (TypeError, ValueError, UnicodeError) as error:
+        runtime_error(f"{command} failed: {error}")
+
+
+def candidate_records(values: object) -> list[str]:
+    if values.texts and values.input is not None:
+        usage_error("TEXT operands and --input are mutually exclusive")
+    if values.texts:
+        return values.texts
+    if values.input is not None:
+        candidates = read_records(
+            values.input,
+            "stdin" if values.input == "-" else f"candidate file '{values.input}'",
+        )
+    else:
+        if stdin_is_terminal():
+            usage_error("no candidate input supplied")
+        candidates = read_records("-", "stdin")
+    if not candidates:
+        runtime_error("candidate input contains no records")
+    return candidates
+
+
+def search(pattern: str, candidates: list[str], boolean: bool) -> str:
+    _, NODE = dependency()
+    records: list[str] = []
+    try:
+        node = NODE(regex=pattern)
+        for text in candidates:
+            if boolean:
+                records.append(compact_json({"text": text, "matched": bool(node.match(text, boolean=True))}))
+                continue
+            matches = []
+            for match in node.match(text):
+                matches.append(
+                    {
+                        "text": match.group(0),
+                        "start": match.start(),
+                        "end": match.end(),
+                        "groups": list(match.groups()),
+                        "groupdict": match.groupdict(),
+                    }
+                )
+            records.append(compact_json({"text": text, "matched": bool(matches), "matches": matches}))
+    except Exception as error:
+        runtime_error(f"search failed: {error}")
+    return "\n".join(records) + "\n"
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    if arguments and arguments[0] in {"-h", "--help"}:
+        if len(arguments) != 1:
+            usage_error("--help accepts no command or operands")
+        write_stdout(TOP_HELP)
+        return
+    if arguments and arguments[0] in {"-V", "--version"}:
+        if len(arguments) != 1:
+            usage_error("--version accepts no command or operands")
+        dependency()
+        write_stdout(f"{PROGRAM} {VERSION} (mevanlc/regexfinder {COMMIT})\n")
+        return
+    if not arguments:
+        usage_error("missing command")
+    command = arguments.pop(0)
+    if command not in COMMANDS:
+        usage_error(f"unknown command '{command}'")
+    if arguments and arguments[0] in {"-h", "--help"}:
+        if len(arguments) != 1:
+            usage_error("--help accepts no other options or operands")
+        write_stdout(command_help(command))
+        return
+    values = parse_command(command, arguments)
+    if command == "search":
+        output = search(values.pattern, candidate_records(values), values.boolean)
+    else:
+        output = graph_operation(
+            command,
+            values.pattern,
+            values.alpha,
+            getattr(values, "verbose", False),
+        )
+    write_stdout(output)
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_cli(PROGRAM, main))

@@ -515,3 +515,72 @@ digits 1 through 7 can become a legacy octal escape such as `\01`; generated mat
 can therefore fail for those original phrases. The recursive upstream renderer can
 also exhaust the JavaScript stack on a sufficiently long phrase. This exploratory CLI
 normalizes that error, but it is not a CPU, memory, or recursion-isolation boundary.
+
+## Python setup
+
+The Python commands share one uv project, require Python 3.10 or newer, and keep the
+interpreter environment in the ignored `.venv/` directory. Install only the exact
+versions and Git commits recorded by `uv.lock`:
+
+```sh
+uv sync --frozen
+```
+
+Run the commands through uv so the locked project environment is selected even when
+the current working directory is outside this checkout.
+
+## regexfinder
+
+`bin/regexfinder` exercises the graph and matching APIs from the modernized
+`mevanlc/regexfinder` fork, pinned to commit
+`88b50c683f77c68ff232f75e111ea6650940c4b5`. That fork packages the original
+clockworkmicro algorithms for Python 3.10+ without replacing them.
+
+```text
+Usage:
+  regexfinder analyze [OPTIONS] PATTERN
+  regexfinder optimize [OPTIONS] PATTERN
+  regexfinder search [OPTIONS] PATTERN [TEXT...]
+
+Graph options for analyze/optimize:
+  -a, --alpha NUMBER               Non-negative finite objective weight; default 1
+
+Search input:
+  TEXT...                          Candidate strings as separate arguments
+  -i, --input FILE                 Read LF/CRLF-delimited candidates; use - for stdin
+  -b, --boolean                    Report only whether each candidate has a match
+
+Optimization diagnostics:
+  -v, --verbose                    Replay captured upstream diagnostics on stderr
+```
+
+Patterns are Python regex bodies, not slash-delimited literals. Search candidates
+come from positional arguments, one strict-UTF-8 record file, or stdin. LF and CRLF
+delimit records; interior empty records, duplicates, order, whitespace, controls, and
+an unterminated final record are preserved.
+
+```console
+$ uv run --frozen -- ./bin/regexfinder analyze '[ab]'
+{"input_regex":"[ab]","alpha":1.0,"graph":{"out_regex":"[ab]","cardinality":2,"log2_cardinality":2.0,"entropy":1.0,"complexity":4,"phi":6.0}}
+
+$ uv run --frozen -- ./bin/regexfinder optimize 'a(b|c)d'
+{"input_regex":"a(b|c)d","alpha":1.0,"before":{"out_regex":"a(b|c)d","cardinality":2,"log2_cardinality":1.0,"entropy":1.0,"complexity":7,"phi":8.0},"after":{"out_regex":"a[bc]d","cardinality":2,"log2_cardinality":1.0,"entropy":1.0,"complexity":6,"phi":7.0},"changed":true}
+
+$ printf 'car\ndog\n' | uv run --frozen -- ./bin/regexfinder search --boolean 'ca[rt]'
+{"text":"car","matched":true}
+{"text":"dog","matched":false}
+```
+
+`analyze` reports the library's direct properties, including its known leaf-graph
+bug: `[ab]` reports `log2_cardinality` as 2.0 rather than 1.0. `optimize` calls
+`reducePhi()` once. Phi reduction may broaden the accepted language; it is not an
+equivalence-preserving canonicalizer. Unsolicited upstream debug output is suppressed
+unless `--verbose` replays it on stderr.
+
+`search` calls `NODE.match()` and exposes Python search spans; it does not use the
+graph renderer. Graph analysis supports only a hand-written ASCII-oriented subset of
+Python regex syntax and cannot assign finite cardinality to `*` or `+`. The advertised
+random-string property is defective, the only visualization API writes a PDF and
+launches a viewer, and the unfinished word collector is not stable sample inference,
+so none is exposed. This wrapper does not repair those behaviors or isolate CPU,
+memory, or regex-backtracking risks.

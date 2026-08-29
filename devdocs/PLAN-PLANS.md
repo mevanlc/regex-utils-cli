@@ -91,7 +91,7 @@ names.
   [RegexTrie](https://github.com/ikeofilic1/RegexTrie)
 - [x] `devdocs/tre/PLAN.md` —
   [TRE](https://github.com/laurikari/tre)
-- [ ] `devdocs/hyperscan/PLAN.md` —
+- [x] `devdocs/hyperscan/PLAN.md` —
   [Intel Hyperscan](https://github.com/intel/hyperscan), considering the
   [Conan Center recipe](https://conan.io/center/recipes/hyperscan) if it improves the
   current target's setup.

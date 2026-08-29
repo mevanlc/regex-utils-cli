@@ -1,0 +1,53 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=install-grex-rust
+TOOLCHAIN=1.87.0
+VERSION=1.4.6
+SCRIPT_DIR=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+CARGO_HOME_PATH=$ROOT/.cargo-home
+GREX=$CARGO_HOME_PATH/bin/grex
+
+fail() {
+    printf '%s: %s\n' "$PROGRAM" "$1" >&2
+    exit 1
+}
+
+command -v rustup >/dev/null 2>&1 || fail "rustup not found on PATH"
+command -v cargo >/dev/null 2>&1 || fail "cargo not found on PATH"
+
+if ! rustup run "$TOOLCHAIN" rustc --version >/dev/null 2>&1; then
+    fail "Rust $TOOLCHAIN is required; run: rustup toolchain install 1.87.0 --profile minimal --component rustfmt --component clippy"
+fi
+
+cd "$ROOT"
+
+metadata_is_valid() {
+    INSTALL_LIST=$(CARGO_HOME="$CARGO_HOME_PATH" cargo +"$TOOLCHAIN" install --list 2>/dev/null) || return 1
+    case $INSTALL_LIST in
+        *"grex v1.4.6:
+    grex"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+installation_is_valid() {
+    [ -x "$GREX" ] || return 1
+    [ "$("$GREX" --version 2>/dev/null)" = "grex $VERSION" ] || return 1
+    metadata_is_valid
+}
+
+if installation_is_valid; then
+    exit 0
+fi
+
+set +e
+CARGO_HOME="$CARGO_HOME_PATH" \
+    cargo +"$TOOLCHAIN" install --locked --version "=$VERSION" grex
+STATUS=$?
+set -e
+[ "$STATUS" -eq 0 ] || exit "$STATUS"
+
+installation_is_valid || fail "installed grex failed metadata or version validation"

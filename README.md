@@ -895,3 +895,97 @@ CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 nextest run --locked
 CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 fmt --check
 CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 clippy --locked --all-targets -- -D warnings
 ```
+
+## grex (Rust)
+
+The maintained native grex CLI already exposes the library's inference features, so
+this project installs and invokes it directly without a wrapper:
+
+```sh
+./tools/install-grex-rust
+./.cargo-home/bin/grex --version
+```
+
+The installer uses Rust 1.87.0 and the published package lock to install exact crates.io
+release 1.4.6 beneath `.cargo-home`. It validates Cargo's install metadata and the
+native version, and a valid cached installation succeeds quietly without network
+access. The `grex-1.4.6.crate` archive has SHA-256
+`4ada730ccbcaf2eaaf9d254661960b0211e042e031e307ba8fd39821307f46dd`
+and records upstream commit `db9275ace11ad455700656c6186e0d69f6107870`.
+
+```text
+Usage:
+  ./.cargo-home/bin/grex [OPTIONS] {INPUT...|--file FILE}
+
+Input:
+  INPUT...                       One or more literal positive examples
+  -f, --file FILE                Read LF/CRLF-delimited examples from FILE
+
+Character generalization:
+  -d, --digits                   Convert Unicode decimal digits to \d
+  -D, --non-digits               Convert Unicode non-digits to \D
+  -s, --spaces                   Convert Unicode whitespace to \s
+  -S, --non-spaces               Convert Unicode non-whitespace to \S
+  -w, --words                    Convert Unicode word characters to \w
+  -W, --non-words                Convert Unicode non-word characters to \W
+
+Escaping and repetition:
+  -e, --escape                   Escape non-ASCII characters
+      --with-surrogates          Use surrogate pairs; requires --escape
+  -r, --repetitions              Convert repeated substrings to quantifiers
+      --min-repetitions N        Positive u32; default 1
+      --min-substring-length N   Positive u32; default 1
+
+Anchors and display:
+      --no-start-anchor          Omit ^
+      --no-end-anchor            Omit $
+      --no-anchors               Omit both anchors
+  -x, --verbose                  Emit multiline (?x) output
+  -c, --colorize                 Add ANSI syntax highlighting
+
+Other:
+  -i, --ignore-case              Emit case-insensitive output
+  -g, --capture-groups           Use capturing groups where groups are needed
+  -h, --help                     Print native help
+  -v, --version                  Print native version
+```
+
+```console
+$ ./.cargo-home/bin/grex a aa aaa
+^a(?:aa?)?$
+
+$ printf '123\n٤٥٦\n' | ./.cargo-home/bin/grex --digits -
+^\d\d\d$
+
+$ ./.cargo-home/bin/grex --repetitions aa bcbc defdefdef
+^(?:a{2}|(?:bc){2}|(?:def){3})$
+
+$ ./.cargo-home/bin/grex --escape --with-surrogates '💩'
+^\u{d83d}\u{dca9}$
+```
+
+Inputs are positive literal examples, not regex source. Grex sorts them internally,
+builds and minimizes a DFA, and emits one anchored Rust-dialect regex plus a final
+newline. Duplicates and input order do not change the accepted language. Empty records
+beside nonempty examples are ignored by release 1.4.6; a source containing one empty
+record alone is valid and emits `^$`, while a zero-byte file or pipe reaches the native
+nonempty-input panic.
+
+Options must precede the first positional example because the positional operand is
+greedy. After that point, known option spellings are literal samples; an unknown leading
+hyphen token is also accepted as a sample. A sole `-` reads example records from
+non-terminal stdin but is a literal sample on a terminal. `--file -` instead trims stdin
+and treats it as a filename. Relative file paths use the caller's working directory.
+Files and pipes accept LF/CRLF records and can carry NUL; invalid UTF-8 through a file is
+a handled error, while invalid piped UTF-8 follows the native panic path.
+
+The six shorthand flags deliberately generalize beyond supplied examples. Repetition
+thresholds take effect only with `--repetitions`. Output is anchored, case-sensitive,
+and noncapturing by default; the case, group, anchor, verbose, escape, surrogate, and
+color controls retain their native behavior. `--colorize` emits ANSI even to captured
+stdout, and surrogate output is not valid Rust Unicode-scalar regex syntax.
+
+Native help/version exit 0, Clap usage errors exit 2, handled file failures exit 1, and
+builder/input or broken-pipe panics normally exit 101. There is no project diagnostic
+prefix or JSON mode. Grex does not accept negative examples, optimize an existing regex,
+generate matching text, search candidate text, or expose its automaton.

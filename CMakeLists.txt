@@ -10,6 +10,8 @@ option(REGEX_UTILS_BUILD_REGEXTRIE_C
        "Build the RegexTrie C exercise" ON)
 option(REGEX_UTILS_BUILD_TRE
        "Build the TRE agrep exercise" ON)
+option(REGEX_UTILS_BUILD_HYPERSCAN
+       "Build the Intel Hyperscan exercise" OFF)
 
 function(regex_utils_project_warnings target)
   if(MSVC)
@@ -101,6 +103,55 @@ if(REGEX_UTILS_BUILD_REGEXTRIE_C)
       COMMAND sh "${CMAKE_SOURCE_DIR}/tests/regextrie_c_cli_test.sh"
                  "$<TARGET_FILE:regextrie-c>"
     )
+  endif()
+endif()
+
+if(REGEX_UTILS_BUILD_HYPERSCAN)
+  if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Darwin|Linux)$")
+    message(FATAL_ERROR
+      "REGEX_UTILS_BUILD_HYPERSCAN supports only x86_64 Linux and macOS")
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+      message(FATAL_ERROR
+        "REGEX_UTILS_BUILD_HYPERSCAN requires CMAKE_OSX_ARCHITECTURES=x86_64")
+    endif()
+  elseif(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    message(FATAL_ERROR
+      "REGEX_UTILS_BUILD_HYPERSCAN requires an x86_64 Linux target")
+  endif()
+
+  enable_language(CXX)
+  find_package(hyperscan CONFIG REQUIRED)
+
+  add_executable(hyperscan native/hyperscan_cli.cpp)
+  target_link_libraries(hyperscan PRIVATE hyperscan::hs)
+  target_compile_features(hyperscan PRIVATE cxx_std_11)
+  set_target_properties(hyperscan PROPERTIES
+    CXX_STANDARD 11
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS OFF
+  )
+  target_compile_definitions(hyperscan PRIVATE
+    REGEX_UTILS_HYPERSCAN_SOURCE_TAG="v5.4.2.1"
+    REGEX_UTILS_HYPERSCAN_EXPECT_SANITIZERS=$<BOOL:${REGEX_UTILS_ENABLE_SANITIZERS}>
+  )
+  if(BUILD_TESTING)
+    target_compile_definitions(hyperscan PRIVATE
+      REGEX_UTILS_HYPERSCAN_TEST_SEAMS=1)
+  endif()
+  regex_utils_project_warnings(hyperscan)
+  regex_utils_runtime_directory(hyperscan)
+  regex_utils_enable_sanitizers(hyperscan)
+
+  if(BUILD_TESTING)
+    add_test(
+      NAME hyperscan-cli
+      COMMAND /bin/sh "${CMAKE_SOURCE_DIR}/tests/hyperscan_cli_test.sh"
+              "$<TARGET_FILE:hyperscan>"
+              "${CMAKE_SOURCE_DIR}/bin/hyperscan"
+    )
+    set_tests_properties(hyperscan-cli PROPERTIES TIMEOUT 180)
   endif()
 endif()
 

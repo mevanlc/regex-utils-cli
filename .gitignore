@@ -23,6 +23,9 @@ __pycache__/
 
 # C, C++, Conan, and CMake
 /build/
+/.conan2/
+CMakeUserPresets.json
+/conan/recipes/hyperscan/test_package/build/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

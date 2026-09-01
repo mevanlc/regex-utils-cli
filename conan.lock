@@ -1,0 +1,13 @@
+{
+    "version": "0.5",
+    "requires": [
+        "openssl/3.5.8#19f279813c32a9d544795e4a7853cf09%1787920039.935",
+        "hyperscan/5.4.2.1#2441e8b97b91dcaba8680a69c6f1606b%1788223501.674815",
+        "boost/1.83.0#bc9060051b428f90c2df6065f03b34f8%1783338741.364"
+    ],
+    "build_requires": [
+        "ragel/6.10#e98775a5336c9405758fe9670f4608a3%1741858957.802"
+    ],
+    "python_requires": [],
+    "config_requires": []
+}

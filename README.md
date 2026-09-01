@@ -995,8 +995,8 @@ generate matching text, search candidate text, or expose its automaton.
 The native exercises use the shared root CMake project. They require CMake 3.24 or
 newer and a C compiler. TRE additionally requires a POSIX host with `/bin/sh`, `make`,
 Autoconf, Automake, gettext's `autopoint`, and GNU libtool (`glibtoolize` on macOS).
-Neither current exercise uses Conan. Configure, build, and test the default RegexTrie
-and TRE Debug targets with:
+The default RegexTrie and TRE graph does not use Conan; opt-in Hyperscan has a separate
+C++/Conan setup below. Configure, build, and test the default Debug targets with:
 
 ```sh
 cmake -S . -B build/native \
@@ -1029,6 +1029,200 @@ ASAN_OPTIONS=detect_leaks=0 \
 ```
 
 Use `detect_leaks=0` only on macOS, where this sanitizer runtime lacks LeakSanitizer.
+
+## Hyperscan setup
+
+The Hyperscan exercise is deliberately separate from `build/native`. It supports only
+x86_64 macOS or Linux with SSSE3. On Apple Silicon, Apple Clang cross-builds x86_64 and
+the launcher runs it explicitly through Rosetta 2. Windows, 32-bit targets, Arm Linux,
+and Linux cross-builds from non-x86 hosts are rejected. This is Intel Hyperscan, not the
+Arm-capable Vectorscan fork.
+
+The package recipe builds immutable source tag `v5.4.2.1` (commit
+`809f09b611e8da52b377481c14db575bf2625fad`) from an archive with SHA-256
+`7119ef2db45c98abd816ba789aae82fdfd1a0b240bb40a88bac2d90933a346df`. Upstream's
+internal constants remain 5.4.2; `SOURCE_DATE_EPOCH` makes its runtime version
+reproducibly report `5.4.2 2026-08-26`. The checked lock also fixes Boost 1.83.0
+headers, static OpenSSL Crypto 3.5.8, and build-time Ragel 6.10 recipe revisions.
+
+Conan 2.31.2 runs only through `uvx`, stores its cache in ignored `.conan2/`, and
+generates consumer files under `build/hyperscan/conan/`. From a clean checkout:
+
+```sh
+CONAN_HOME="$PWD/.conan2" \
+  uvx --from conan==2.31.2 conan profile detect --force
+
+CONAN_HOME="$PWD/.conan2" \
+  uvx --from conan==2.31.2 conan create conan/recipes/hyperscan \
+    --profile:host=conan/profiles/hyperscan-x86_64 \
+    --profile:build=default \
+    --lockfile=conan.lock \
+    --build=missing
+
+CONAN_HOME="$PWD/.conan2" \
+  uvx --from conan==2.31.2 conan install . \
+    --profile:host=conan/profiles/hyperscan-x86_64 \
+    --profile:build=default \
+    --lockfile=conan.lock \
+    --build=missing
+
+cmake -S . -B build/hyperscan \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=build/hyperscan/conan/conan_toolchain.cmake \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DREGEX_UTILS_ENABLE_SANITIZERS=OFF \
+  -DREGEX_UTILS_BUILD_REGEXTRIE_C=OFF \
+  -DREGEX_UTILS_BUILD_TRE=OFF \
+  -DREGEX_UTILS_BUILD_HYPERSCAN=ON
+cmake --build build/hyperscan --parallel
+ctest --test-dir build/hyperscan --output-on-failure
+```
+
+The local recipe produces static `libhs.a`, four public headers, and the BSD license.
+It uses C++11 and the Core2/SSSE3 baseline with generic tuning, disables fat runtime,
+AVX2/AVX-512 variants, Chimera, tools, examples, dumps, and unrelated tests, and links
+static OpenSSL Crypto transitively. Upstream warnings remain visible but nonfatal;
+project-owned C++ is built with warnings denied. The fixed normal launcher never
+rebuilds or searches `PATH`:
+
+```console
+$ ./bin/hyperscan --version
+hyperscan v5.4.2.1 (Hyperscan 5.4.2 2026-08-26)
+```
+
+For the separate ASan/UBSan package and consumer graph:
+
+```sh
+CONAN_HOME="$PWD/.conan2" \
+  uvx --from conan==2.31.2 conan create conan/recipes/hyperscan \
+    --profile:host=conan/profiles/hyperscan-x86_64 \
+    --profile:build=default \
+    --lockfile=conan.lock \
+    -o:h 'hyperscan/*:sanitizers=True' \
+    --build=missing
+
+CONAN_HOME="$PWD/.conan2" \
+  uvx --from conan==2.31.2 conan install . \
+    --profile:host=conan/profiles/hyperscan-x86_64 \
+    --profile:build=default \
+    --lockfile=conan.lock \
+    -o:h '&:sanitizers=True' \
+    -o:h 'hyperscan/*:sanitizers=True' \
+    --build=missing
+
+cmake -S . -B build/hyperscan-sanitize \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=build/hyperscan-sanitize/conan/conan_toolchain.cmake \
+  -DREGEX_UTILS_ENABLE_SANITIZERS=ON \
+  -DREGEX_UTILS_BUILD_REGEXTRIE_C=OFF \
+  -DREGEX_UTILS_BUILD_TRE=OFF \
+  -DREGEX_UTILS_BUILD_HYPERSCAN=ON
+cmake --build build/hyperscan-sanitize --parallel
+ASAN_OPTIONS=detect_leaks=0 \
+REGEX_UTILS_HYPERSCAN_SKIP_RESOURCE_TESTS=1 \
+  ctest --test-dir build/hyperscan-sanitize --output-on-failure
+```
+
+Use `detect_leaks=0` only for the macOS sanitizer runtime. Populated locked caches can
+be verified offline by adding `--no-remote` to `conan create` and `conan install`.
+
+## Intel Hyperscan
+
+`bin/hyperscan` compiles ordered regexes or byte literals into one database and either
+scans a binary subject or reports compiled resource sizes. Pattern IDs are stable,
+one-based source positions.
+
+```text
+Usage:
+  hyperscan scan [PATTERN_OPTIONS] [SCAN_OPTIONS]
+  hyperscan info [PATTERN_OPTIONS]
+  hyperscan --help
+  hyperscan --version
+
+Pattern source (choose one):
+  -e, --expression PATTERN       Add one pattern; repeatable
+  -f, --expression-file FILE     Read LF-delimited patterns from FILE
+
+Compilation:
+      --literal                  Compile byte literals instead of regexes
+      --mode MODE                block, stream, or vectored [default: block]
+  -i, --caseless                 Case-insensitive matching
+  -s, --dotall                   Make dot match newlines
+  -m, --multiline                Enable multiline anchors
+      --single-match             Report at most one match per pattern
+      --allow-empty              Permit regexes that match empty input
+      --utf8                     Enable strict UTF-8 mode
+      --ucp                      Enable Unicode properties; requires --utf8
+      --prefilter                Permit false-positive prefilter matches
+      --som-leftmost             Report leftmost start offsets
+      --som-horizon HORIZON      small, medium, or large for stream SOM
+      --min-offset N             Minimum match end offset
+      --max-offset N             Maximum match end offset
+      --min-length N             Minimum match length
+      --edit-distance N          Experimental edit distance
+      --hamming-distance N       Experimental Hamming distance
+
+Scan input:
+      --input FILE               Read binary subject; - is stdin [default]
+      --text TEXT                Use exact argument bytes as the subject
+      --chunk-size N             Stream/vector chunk bytes [default: 4096]
+      --max-matches N            Event limit [default: 100000]
+```
+
+Expression files are binary LF records. One CR immediately before an LF is removed;
+all other bytes, whitespace, empty records, and NUL are preserved. A zero-byte file is
+an error. Regex mode rejects NUL because its upstream API takes C strings. Literal mode
+passes explicit lengths, supports NUL, and accepts only caseless, single-match, SOM, and
+mode options. Duplicates are preserved. Limits are 10,000 patterns, 8,192 bytes per
+pattern, and 8 MiB cumulatively.
+
+`scan` pre-reads one exact subject from `--text`, a named binary file, or stdin. It
+preserves NUL and invalid byte sequences unless `--utf8` requests strict validation,
+and caps the subject at 256 MiB. Block mode scans once. Vectored mode passes chunks as
+one logical subject, and stream mode retains state across chunks and closes the stream
+with callbacks enabled for end-of-data matches. Chunk size is positive and valid only
+for stream/vector modes.
+
+```console
+$ ./bin/hyperscan scan -e foo -e 'ba[rz]' --text 'xxfoobar baz'
+{"id":1,"start":null,"end":5,"start_status":"disabled"}
+{"id":2,"start":null,"end":8,"start_status":"disabled"}
+{"id":2,"start":null,"end":12,"start_status":"disabled"}
+
+$ printf 'xxfoobar' | ./bin/hyperscan scan -e 'foo.*bar' \
+    --mode stream --chunk-size 3 --som-leftmost
+{"id":1,"start":2,"end":8,"start_status":"available"}
+
+$ ./bin/hyperscan scan -e colour --edit-distance 1 --text color
+{"id":1,"start":null,"end":5,"start_status":"disabled"}
+
+$ ./bin/hyperscan info -e foo -e 'ba[rz]' --mode stream
+{"source_tag":"v5.4.2.1","library_version":"5.4.2 2026-08-26","compile_kind":"regex","mode":"stream","patterns":2,"database_bytes":4992,"scratch_bytes":2317,"stream_bytes":20}
+```
+
+Resource sizes vary by compiler and platform. Match output is compact JSON Lines in
+Hyperscan callback order. `end` is an exclusive byte offset. Without SOM, `start` is
+honestly `null`/`disabled`; with SOM it is a byte offset or `null`/`past_horizon` for a
+small or medium streaming horizon. Output does not invent matched text or captures.
+The command buffers all events, stops at `--max-matches` plus one, and emits no partial
+stdout on failure. EPIPE is quiet.
+
+Hyperscan syntax is PCRE-like, not PCRE-equivalent. It has no captures in callbacks,
+backreferences, recursion, arbitrary assertions, atomic groups, or possessive
+quantifiers. It can report multiple end positions, does not promise global callback
+ordering, and SOM costs memory and performance. Prefilter deliberately produces a
+superset and this CLI does not add an exact confirmer. Edit and Hamming distance are
+mutually exclusive, experimental, and potentially expensive. UCP requires UTF-8;
+malformed UTF-8 patterns and subjects are rejected before the library is called.
+
+Help/version and valid scans (including no matches) exit 0. Usage, local bounds,
+invalid UTF-8, and compile errors exit 2. Platform, file, allocation, runtime, output,
+and match-limit failures exit 1. Diagnostics are prefixed `hyperscan:` and never echo
+raw pattern bytes.
+
+The CLI does not rewrite regex source, infer regexes from samples, generate matching
+text, expose captures, implement logical combinations, confirm prefilter results, or
+serialize databases.
 
 ## RegexTrie (C)
 

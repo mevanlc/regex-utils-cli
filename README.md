@@ -992,9 +992,11 @@ generate matching text, search candidate text, or expose its automaton.
 
 ## Native C/C++ setup
 
-The native exercises use the shared root CMake project. RegexTrie requires CMake 3.24
-or newer and a C11 compiler; it has no Conan dependency. Configure, build, and test its
-Debug target with:
+The native exercises use the shared root CMake project. They require CMake 3.24 or
+newer and a C compiler. TRE additionally requires a POSIX host with `/bin/sh`, `make`,
+Autoconf, Automake, gettext's `autopoint`, and GNU libtool (`glibtoolize` on macOS).
+Neither current exercise uses Conan. Configure, build, and test the default RegexTrie
+and TRE Debug targets with:
 
 ```sh
 cmake -S . -B build/native \
@@ -1003,13 +1005,17 @@ cmake -S . -B build/native \
   -DREGEX_UTILS_ENABLE_SANITIZERS=OFF
 cmake --build build/native --parallel
 ctest --test-dir build/native --output-on-failure
+cmake --build build/native --target tre-upstream-check
 ```
 
-The first configure downloads only the immutable RegexTrie commit archive into the
-ignored build tree and verifies SHA-256
-`ed0e39fb3359927ff74f0a552a85e96371898ada82ca483fb68a115a73e7133c`.
-Subsequent builds reuse that source without a global installation. Set
-`REGEX_UTILS_BUILD_REGEXTRIE_C=OFF` to omit both the fetch and every RegexTrie target.
+The first build downloads immutable RegexTrie and TRE commit archives into the ignored
+build tree. CMake verifies their respective SHA-256 values
+`ed0e39fb3359927ff74f0a552a85e96371898ada82ca483fb68a115a73e7133c` and
+`8f630500dcd10ad5c086e3e8e851888107ecca93c384793f856384c6a5c19664`.
+Subsequent builds reuse those sources without a global library installation. Set
+`REGEX_UTILS_BUILD_REGEXTRIE_C=OFF` or `REGEX_UTILS_BUILD_TRE=OFF` to omit that
+library's fetch, host-tool checks, targets, and tests. The complete upstream TRE suite is
+behind the non-default `tre-upstream-check` target because its limit test is slow.
 
 For an ASan/UBSan build on Clang or GCC:
 
@@ -1090,3 +1096,125 @@ still abort under genuine resource exhaustion.
 The pinned upstream source has no license declaration. It is fetched only for this
 local exercise and must not be redistributed, including in linked binary form, without
 permission from its copyright holder.
+
+## TRE `agrep`
+
+TRE is exercised through the upstream CLI installed at exactly:
+
+```text
+build/native/tre-install/bin/agrep
+```
+
+There is no `bin/` wrapper and the project never searches `PATH` for another command
+named `agrep`. The build pins post-release commit
+`71bfcaf0af3994384987c6c2679ed7d078ffe189`, while the upstream program still reports
+version `0.9.0`:
+
+```console
+$ build/native/tre-install/bin/agrep --version
+agrep (TRE agrep) 0.9.0
+```
+
+The selected command searches TRE extended regular expressions over newline-delimited
+records from files or stdin. Exact matching is the default. `-E N` and `-0` through
+`-9` enable approximate matching, while `-D`, `-I`, and `-S` set deletion, insertion,
+and substitution costs. `-B` rereads named files to emit only their lowest-cost records
+and therefore cannot operate on stdin.
+
+```text
+Usage: build/native/tre-install/bin/agrep [OPTION]... PATTERN [FILE]...
+
+Pattern:
+  -e, --regexp=PATTERN          Supply PATTERN as a TRE ERE
+  -i, --ignore-case             Use locale-sensitive case folding
+  -k, --literal                 Treat PATTERN as a literal string
+  -w, --word-regexp             Require a whole-word match
+
+Approximate matching:
+  -E, --max-errors=NUM          Set the maximum total match cost
+  -0 ... -9                     Set the maximum cost with one digit
+  -D, --delete-cost=NUM         Set the missing-character cost
+  -I, --insert-cost=NUM         Set the extra-character cost
+  -S, --substitute-cost=NUM     Set the wrong-character cost
+  -B, --best-match              Emit only records with the lowest cost
+
+Records and output:
+  -d, --delimiter=PATTERN       Use a TRE regex as the record delimiter
+  -M, --delimiter-after         Print custom delimiters after records
+  -v, --invert-match            Select nonmatching records
+  -m, --max-count=NUM           Stop after NUM selected records per input
+  -c, --count                   Print selected-record counts
+  -l, --files-with-matches      Print only matching file names
+  -n, --record-number           Prefix record numbers
+  -s, --show-cost               Prefix total match costs
+      --show-position           Prefix first-match byte offsets
+      --color, --colour         Highlight the first match with ANSI escapes
+  -h, --no-filename             Suppress file-name prefixes
+  -H, --with-filename           Always print file-name prefixes
+  -q, --quiet, --silent         Suppress normal output
+```
+
+Approximate search can report record number, total cost, and byte positions together:
+
+```console
+$ printf 'optimize\noptimise\noptmise\nopitmize\nother\n' | \
+    build/native/tre-install/bin/agrep -2 -n -s --show-position optimize
+1:0:0-8:optimize
+2:1:0-8:optimise
+3:2:0-7:optmise
+4:2:0-8:opitmize
+```
+
+Costs can differ by edit operation:
+
+```console
+$ printf 'abc\naxc\nabbc\nac\n' | \
+    build/native/tre-install/bin/agrep -E 2 -I 2 -D 3 -S 4 -s abc
+0:abc
+2:abbc
+```
+
+Patterns may also contain TRE's approximate constraints:
+
+```console
+$ printf 'abc\naxc\nabbc\nac\nzzz\n' | \
+    build/native/tre-install/bin/agrep -s '(abc){~1}'
+0:abc
+1:axc
+1:abbc
+1:ac
+```
+
+Input files are searched in operand order, and relative paths belong to the caller's
+working directory. The default newline delimiter is excluded from records; `-d` accepts
+a TRE regex for custom delimiters and `-M` changes their output placement. A trailing
+delimiter creates no phantom empty record. Prefix order is filename, record number,
+cost, then position. Positions are byte offsets even in a multibyte locale.
+
+`agrep` calls `setlocale(LC_ALL, "")`, so character classes, case folding, and invalid
+multibyte input follow the inherited locale. Set `LC_ALL=C` for deterministic bytewise
+ASCII behavior. Matching itself is length-aware and `\x00` can match NUL, but ordinary
+record output uses a C-string write and truncates at the first NUL. Use modes such as
+`--count`, `--quiet`, or file-name selection when searching binary data.
+
+Native behavior is preserved without validation or status translation. Valid numeric
+arguments should be nonnegative base-10 integers, although upstream's `atoi` parsing
+accepts values such as `-E nope` as zero and `-E 1junk` as one. A match exits 0 and no
+match exits 1. Help/version exit 0; malformed patterns normally exit 2, while an unknown
+option, an unreadable sole file, and `-B` on stdin currently exit 1. A missing file can
+be masked by a later match, and a closed output pipe terminates through SIGPIPE.
+
+TRE performs exact and approximate search. This CLI does not rewrite or optimize regex
+source, infer regexes from samples, generate matching text, emit captures or separate
+edit counts, or provide binary-safe record output. Ordinary matching has predictable
+subject-length behavior, but regex work grows with pattern size and backreferences can
+require exponential time. The selected source rejects patterns longer than 65,536
+bytes. A degenerate literal exactly at that maximum compiles in the normal build but
+exhausts the instrumented call stack under AddressSanitizer on the validated macOS
+build, so the normal CLI suite covers the exact boundary while the sanitizer suite
+exercises the practical CLI cases.
+
+The pinned source uses a two-clause BSD-style license. It is built directly with its
+Autotools system and installed only beneath `build/native/`. Conan Center's
+`tre/cci.20230717` snapshot predates both TRE 0.9.0 and the selected safety fixes while
+still requiring the same Autotools stack, so Conan would not improve this setup.

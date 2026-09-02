@@ -4,6 +4,67 @@ Project-local command-line exercises for regex-related libraries across several
 language ecosystems. Each command stays close to its upstream library's public API;
 the implementation plans and verified limitations are under [`devdocs/`](devdocs/).
 
+## Just recipes
+
+With Just 1.55 or newer, each library exercise has the same project-level task
+interface:
+
+```text
+<package>-deps          Install and verify package dependencies
+<package>-build         Build or syntax/load-check the package
+<package>-test          Run the package's tests
+<package>-run [ARGS...] Run the package's primary CLI
+<package>-clean-deps    Clean package dependency artifacts
+<package>-clean-build   Clean package build artifacts
+<package>-clean         Clean both dependencies and build artifacts
+```
+
+Run `just` or `just --list` to see all recipes. Package names are:
+
+```text
+regexp-optimizer  regexp-assemble  regex-presuf      regexp-trie
+regexp-tree       oniguruma-parser grex-js           regex-trie-js
+regexfinder       triegex           retrie            frak
+regextrie-rust    grex-rust         regextrie-c       tre
+hyperscan
+```
+
+The phases are deliberately independent: the Just recipes for `build`, `test`, and
+`run` do not chain to `deps` or one another. Existing launchers retain their own normal
+behavior, including uv environment checks and the `cargo run` used by
+`regextrie-rust`. This keeps routine commands from explicitly rerunning `cpanm`,
+`npm ci`, native configuration, or Conan setup. Prepare and use one package with:
+
+```console
+$ just regexfinder-deps
+$ just regexfinder-build
+$ just regexfinder-test
+$ just regexfinder-run analyze '[ab]'
+```
+
+Run arguments are forwarded as distinct arguments, including empty strings, spaces,
+and tokens beginning with `-`. The run recipes do not add command echoes or Just error
+footers to the underlying CLI's stdout, stderr, or exit status. If a package later
+exposes another executable, its recipe will use
+`<package>-<tool>-run [ARGS...]`; no current package needs a secondary run recipe.
+
+Libraries in one ecosystem still share their existing project-local dependency graph.
+Invoking several related `-deps` recipes in one Just command runs their shared installer
+once, then verifies each selected library. Consequently, a library's `-clean-deps` can
+also unprepare its siblings: these recipes remove shared `local/`, `node_modules/`,
+`.venv/`, `.deps/`, or `.cargo-home/` trees as applicable. Hyperscan dependency cleanup
+removes its Conan home and generated consumer/package-test files.
+
+The `-clean-build` recipes leave separately stored dependencies intact. Perl and Node
+build cleanup is a successful no-op; Python removes shared bytecode caches, Frak removes
+`.cpcache`, Cargo removes shared `target/`, and Grex also uninstalls its built executable.
+RegexTrie C and TRE cannot separate fetched dependencies from outputs inside their
+intentionally shared `build/native` tree, so either native cleanup category removes that
+whole tree. Hyperscan build cleanup runs CMake's clean target while retaining its Conan
+toolchain; its combined cleanup removes the remaining consumer build tree. Each plain
+`-clean` runs build cleanup followed by dependency cleanup. The Just recipes cover normal
+builds; use the direct commands below for sanitizer builds and lower-level troubleshooting.
+
 ## Perl setup
 
 The Perl commands share one exact, project-local dependency manifest. Requirements:

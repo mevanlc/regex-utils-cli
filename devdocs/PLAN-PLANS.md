@@ -70,12 +70,18 @@ names.
   [triegex](https://github.com/ZhukovAlexander/triegex)
 - [x] `devdocs/retrie/PLAN.md` —
   [retrie](https://github.com/ddelange/retrie)
+- [x] `devdocs/exrex/PLAN.md` —
+  [exrex](https://github.com/asciimoo/exrex), reusing its published CLI for
+  exhaustive/random matching-string generation, counting, and simplification.
 
 ### JVM/JDK
 
 - [x] `devdocs/frak/PLAN.md` — [frak](https://github.com/noprompt/frak).
   Frak already has a command-line interface; plan a reproducible project-local
   JVM/Clojure dependency and direct invocation rather than another wrapper.
+- [x] `devdocs/generex/PLAN.md` —
+  [Generex](https://github.com/mifmif/Generex), with a custom wrapper for its
+  library-only automaton enumeration, random generation, indexing, and counts.
 
 ### Rust
 
@@ -84,6 +90,10 @@ names.
 - [x] `devdocs/grex-rust/PLAN.md` —
   [grex](https://github.com/pemistahl/grex), distinct from the npm/Node
   `grex-js` port listed above.
+- [x] `devdocs/rand-regex/PLAN.md` —
+  [rand_regex](https://github.com/kennytm/rand_regex), selected as the mature,
+  current Rust matching-string generator; newer enumeration crates were not yet
+  established enough to add.
 
 ### C and C++ native builds
 
@@ -203,7 +213,7 @@ stable.
    the first plans authored.
 2. Author plans by ecosystem so dependency and build decisions can be reconciled
    together: Perl, Node, Python, JVM, Rust, then C/C++.
-3. Re-read all 17 plans as one implementation sequence. Resolve executable-name,
+3. Re-read all 20 plans as one implementation sequence. Resolve executable-name,
    manifest, lockfile, build-directory, and bootstrap-command conflicts.
 4. Confirm every inventory checkbox has a child plan and every child plan contains
    verified sources, dependency setup, an exact CLI contract, milestones, and
@@ -213,19 +223,22 @@ stable.
 
 ## Reconciled Implementation Sequence
 
-The cross-plan reconciliation pass completed on August 29, 2026 and established this
+The cross-plan reconciliation pass completed on August 29, 2026 and was extended with
+the matching-string generators on September 18, 2026. It established this
 dependency-safe order:
 
 1. Perl: Regexp::Optimizer creates `cpanfile`, `local/`, `bin/`, `t/`, and README;
    Regexp::Assemble, Regex::PreSuf, and Regexp::Trie extend those shared files.
 2. Node: regexp-tree creates `package.json`, `package-lock.json`, and `test/`; the three
    custom Node CLIs extend the same ESM project and lock.
-3. Python: regexfinder creates `pyproject.toml` and `uv.lock`; triegex and retrie extend
-   that one uv environment and retain both immutable Git pins.
+3. Python: regexfinder creates `pyproject.toml` and `uv.lock`; triegex, retrie, and
+   exrex extend that one uv environment and retain both immutable Git pins. Exrex
+   reuses its installed console script.
 4. JVM: Frak owns `deps.edn`, the project-local `.deps/` tree, and its two tooling
-   scripts without adding a wrapper executable.
-5. Rust: regextrie-rust creates the root Cargo package; native grex reuses its toolchain
-   and Cargo home while remaining a separately installed upstream command.
+   scripts; Generex extends the exact artifact graph and adds a Clojure wrapper.
+5. Rust: regextrie-rust creates the root Cargo package; rand_regex adds another binary
+   target, while native grex reuses the toolchain and Cargo home as a separately
+   installed upstream command.
 6. Native: RegexTrie creates the root CMake project, TRE extends its default Debug build,
    and Hyperscan adds an opt-in C++ target in a separate Conan-backed build tree.
 

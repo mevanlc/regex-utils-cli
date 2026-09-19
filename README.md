@@ -24,9 +24,9 @@ Run `just` or `just --list` to see all recipes. Package names are:
 ```text
 regexp-optimizer  regexp-assemble  regex-presuf      regexp-trie
 regexp-tree       oniguruma-parser grex-js           regex-trie-js
-regexfinder       triegex           retrie            frak
-regextrie-rust    grex-rust         regextrie-c       tre
-hyperscan
+regexfinder       triegex           retrie            exrex
+frak              generex           regextrie-rust    rand-regex
+grex-rust         regextrie-c       tre               hyperscan
 ```
 
 The phases are deliberately independent: the Just recipes for `build`, `test`, and
@@ -56,7 +56,7 @@ also unprepare its siblings: these recipes remove shared `local/`, `node_modules
 removes its Conan home and generated consumer/package-test files.
 
 The `-clean-build` recipes leave separately stored dependencies intact. Perl and Node
-build cleanup is a successful no-op; Python removes shared bytecode caches, Frak removes
+build cleanup is a successful no-op; Python removes shared bytecode caches, JVM tools remove
 `.cpcache`, Cargo removes shared `target/`, and Grex also uninstalls its built executable.
 RegexTrie C and TRE cannot separate fetched dependencies from outputs inside their
 intentionally shared `build/native` tree, so either native cleanup category removes that
@@ -783,30 +783,78 @@ text. Deep keys can exhaust Python recursion. The wrapper does not optimize exis
 regexes, accept negative examples, generate matching text, or isolate recursion,
 backtracking, CPU, or memory use.
 
+## exrex
+
+The published exrex 0.12.0 console script already exposes its matching-string
+operations, so this project invokes it directly from the shared uv environment without
+adding a wrapper:
+
+```text
+usage: exrex [-h] [-o FILE] [-l N] [-c] [-m N] [-r] [-s] [-d DELIMITER] [-v]
+             REGEX
+
+  -o, --output FILE                 Write to FILE instead of stdout
+  -l, --limit N                     Bound unbounded repeat expansion; default 20
+  -c, --count                       Count generated strings
+  -m, --max-number N                Stop enumeration after N strings; default -1
+  -r, --random                      Generate one random matching string
+  -s, --simplify                    Render a simplified regex
+  -d, --delimiter DELIMITER         Separate results; default LF
+  -v, --verbose                     Print parsed token data first
+```
+
+```console
+$ uv run --frozen -- exrex '[ab]{1,2}'
+a
+b
+aa
+ab
+ba
+bb
+
+$ uv run --frozen -- exrex '[01]{0,9}' --count
+1023
+
+$ uv run --frozen -- exrex '(ab|ac)' --simplify
+(a[bc])
+```
+
+Exrex lazily generates Python-regex matches. `--limit` bounds `*`, `+`, and other
+unbounded repeat ranges but does not cap total output; use `--max-number` for that.
+The random CLI has no seed option. Character categories and negated classes use
+upstream's explicit tables, several of which cover only code points 0 through 255.
+
+Default output has a final newline, while a custom delimiter appears only between
+values. Neither form escapes delimiters occurring inside generated text. Invalid regexes
+normally exit 1 with an `[!] Error:` diagnostic, argparse errors exit 2, and the native
+0.12.0 empty-regex enumeration retains its uncaught `TypeError`. The project does not
+normalize these behaviors or add stdin pattern input, a version flag, or new framing.
+
 ## JVM setup
 
-The Frak exercise requires JDK 17 or newer plus `curl`, `tar`, `sed`, `mktemp`, and
+The JVM exercises require JDK 17 or newer plus `curl`, `tar`, `sed`, `mktemp`, and
 either `sha256sum` or `shasum`. Bootstrap the pinned official Clojure CLI and prepare
 the runtime from the repository root:
 
 ```sh
 ./tools/bootstrap-clojure
 CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" \
-  ./.deps/clojure/bin/clojure -Srepro -P -M:frak
+  ./.deps/clojure/bin/clojure -Srepro -P
 ./tools/verify-jvm-deps
 ```
 
 The bootstrap installs Clojure CLI 1.12.5.1664 beneath ignored `.deps/clojure` and
 validates the downloaded archive before installing it. `deps.edn` resolves exactly
-five runtime JARs beneath `.deps/m2`: Clojure 1.12.5, spec.alpha 0.5.238,
-core.specs.alpha 0.4.74, tools.cli 0.3.1, and Frak 0.1.9. Frak's obsolete Clojure
-and unused ClojureScript dependencies are excluded. `tools/verify-jvm-deps` checks
-every JAR against `jvm-deps.sha256` and rejects unlisted JARs.
+seven runtime JARs beneath `.deps/m2`: Clojure 1.12.5, spec.alpha 0.5.238,
+core.specs.alpha 0.4.74, tools.cli 0.3.1, Frak 0.1.9, Generex 1.0.2, and
+dk.brics.automaton 1.11-8. Frak's obsolete Clojure and unused ClojureScript dependencies
+are excluded. `tools/verify-jvm-deps` checks every JAR against `jvm-deps.sha256` and
+rejects unlisted JARs.
 
 `-Srepro` excludes user Clojure configuration. Project configuration and dependency
 artifacts stay under `.deps`, while Clojure's ignored classpath cache stays in
-`.cpcache`. Once the tooling and five JARs are prepared, both the cached bootstrap
-and normal Frak invocation work without network access. No global Clojure or
+`.cpcache`. Once the tooling and seven JARs are prepared, the cached bootstrap and
+normal JVM invocations work without network access. No global Clojure or
 Leiningen installation is required.
 
 ## Frak
@@ -871,6 +919,61 @@ with:
 ```sh
 ./test/frak_cli_test.sh
 ```
+
+## Generex
+
+`bin/generex` exercises the public automaton APIs from published Generex 1.0.2. Its
+patterns use the `dk.brics.automaton` dialect rather than `java.util.regex`; Java
+lookarounds and backreferences are not supported.
+
+```text
+Usage:
+  generex enumerate [OPTIONS] PATTERN
+  generex random [OPTIONS] PATTERN
+  generex first [OPTIONS] PATTERN
+  generex nth [OPTIONS] PATTERN INDEX
+  generex count [OPTIONS] PATTERN
+
+Pattern input:
+  PATTERN                    Regex supplied as one argument
+  -i, --input FILE           Read the complete strict-UTF-8 regex; use - for stdin
+
+Generation options:
+  -n, --limit NUMBER         enumerate: maximum values; default 20
+  -n, --count NUMBER         random: number of values; default 1
+      --seed LONG            Seed java.util.Random reproducibly
+      --min-length NUMBER    Minimum random value length
+      --max-length NUMBER    Maximum random value length
+```
+
+```console
+$ ./bin/generex enumerate --limit 6 '[ab]{1,2}'
+{"value":"a"}
+{"value":"aa"}
+{"value":"ab"}
+{"value":"b"}
+{"value":"ba"}
+{"value":"bb"}
+
+$ ./bin/generex random --seed 42 --count 3 --min-length 2 --max-length 4 'a+'
+{"value":"aaaa"}
+{"value":"aa"}
+{"value":"aa"}
+
+$ ./bin/generex count 'a*'
+infinite
+```
+
+String results are compact JSON Lines, preserving empty strings and controls.
+`enumerate` consumes the upstream iterator only to its limit. `random` calls Generex's
+native overloads and measures bounds in Java UTF-16 code units. `first` and one-based
+`nth` expose lexicographic access; `count` calls `isInfinite()` before finite
+`matchedStringsSize()`.
+
+Enumeration may still consume substantial CPU, indexed/count operations can exhaust
+stack or overflow upstream counters for large finite automata, and random constraints
+with no valid value retain upstream behavior. The CLI does not infer or optimize
+regexes, search candidate text, or impose a resource sandbox.
 
 ## Rust setup
 
@@ -956,6 +1059,51 @@ CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 nextest run --locked
 CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 fmt --check
 CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 clippy --locked --all-targets -- -D warnings
 ```
+
+## rand_regex
+
+`bin/rand-regex` wraps rand_regex 0.19.0's random distribution. It supports the Rust
+`regex` dialect, but upstream deliberately rejects anchors and word-boundary assertions
+because they consume no generated bytes.
+
+```text
+Usage: rand-regex [OPTIONS] [PATTERN]
+
+  -i, --input FILE          Read the complete strict-UTF-8 regex; use - for stdin
+  -n, --count NUMBER        Number of samples; default 1
+      --seed U64            Seed generation reproducibly
+      --max-repeat NUMBER   Maximum extra open repetitions; default 20
+      --ascii               Give Perl character classes ASCII meanings
+      --bytes               Parse bytes and emit lowercase hex
+      --jsonl               Emit one {"value":...} object per sample
+  -V, --version             Print CLI and dependency versions
+```
+
+```console
+$ ./bin/rand-regex --seed 42 --count 3 --max-repeat 4 '[a-c]{1,3}'
+b
+b
+bcb
+
+$ ./bin/rand-regex --seed 42 --count 3 --ascii --jsonl '\d{2}'
+{"value":"15"}
+{"value":"25"}
+{"value":"86"}
+
+$ ./bin/rand-regex --seed 42 --bytes '[\x80-\xff]{2}'
+91c3
+```
+
+The pattern comes from one argument, `--input`, or nonterminal stdin and is never
+trimmed. `--max-repeat` controls only the extra repetitions selected for `*`, `+`, and
+`{n,}`. Unicode classes are the default; `--ascii` changes the parser configuration,
+while `--bytes` also disables UTF-8 enforcement and hex-encodes every byte. Use JSONL
+when text values may contain newlines or controls.
+
+Seeded output uses pinned Rand `StdRng`; unseeded output uses the thread-local generator.
+Samples are not promised unique or uniform across the complete language. The command
+does not enumerate, count, infer, optimize, or search regexes, and adds no rejection
+sampling for unsupported assertions.
 
 ## grex (Rust)
 

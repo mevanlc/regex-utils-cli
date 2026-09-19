@@ -1,3 +1,5 @@
+8f8ce233c335e08e113a3f9579de1046fb19927e82468b1bbebcd6cba8760b81  .deps/m2/com/github/mifmif/generex/1.0.2/generex-1.0.2.jar
+a24475f6ccfe1cc7a4fe9e34e05ce687b0ce0c6e8cb781e0eced3b186482c61e  .deps/m2/dk/brics/automaton/automaton/1.11-8/automaton-1.11-8.jar
 4b0da44baf0be21c484bdf17789142f4cfb2d2638db4ae271a4002bdb126f422  .deps/m2/frak/frak/0.1.9/frak-0.1.9.jar
 dfdee131460216a84fef22e537bb0d0579965f8f70338d748323dff26f8e5a8b  .deps/m2/org/clojure/clojure/1.12.5/clojure-1.12.5.jar
 eb73ac08cf49ba840c88ba67beef11336ca554333d9408808d78946e0feb9ddb  .deps/m2/org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.jar

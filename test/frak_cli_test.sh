@@ -84,7 +84,7 @@ assert_match() {
 "$ROOT/tools/verify-jvm-deps" >"$OUT" 2>"$ERR" || fail "runtime artifact verification failed"
 assert_empty "$ERR" "runtime artifact verification"
 JAR_COUNT=$(find "$ROOT/.deps/m2" -type f -name '*.jar' | wc -l | tr -d ' ')
-[ "$JAR_COUNT" -eq 5 ] || fail "expected exactly five runtime JARs, got $JAR_COUNT"
+[ "$JAR_COUNT" -eq 7 ] || fail "expected exactly seven runtime JARs, got $JAR_COUNT"
 pass
 
 CLJ_CONFIG=$CONFIG CLJ_CACHE=$CACHE "$CLOJURE" -Srepro -Stree >"$OUT" 2>"$ERR"
@@ -94,6 +94,8 @@ for coordinate in \
     'org.clojure/spec.alpha 0.5.238' \
     'org.clojure/core.specs.alpha 0.4.74' \
     'org.clojure/tools.cli 0.3.1' \
+    'com.github.mifmif/generex 1.0.2' \
+    'dk.brics.automaton/automaton 1.11-8' \
     'frak/frak 0.1.9'; do
     assert_contains "$coordinate" "$OUT" "dependency tree"
 done

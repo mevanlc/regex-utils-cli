@@ -1,0 +1,19 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=generex
+SCRIPT_DIR=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+CLOJURE=$ROOT/.deps/clojure/bin/clojure
+
+if [ ! -x "$CLOJURE" ]; then
+    printf '%s: project-local Clojure CLI is missing; run just generex-deps\n' "$PROGRAM" >&2
+    exit 1
+fi
+
+cd "$ROOT"
+export CLJ_CONFIG="$ROOT/.deps/clj-config"
+export CLJ_CACHE="$ROOT/.deps/clj-cache"
+
+exec "$CLOJURE" -Srepro -M:generex "$@"

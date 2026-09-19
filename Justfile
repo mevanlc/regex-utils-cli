@@ -34,6 +34,20 @@ _python-clean-build:
     rm -rf bin/__pycache__ lib/__pycache__ test/__pycache__
 
 [private]
+_jvm-deps:
+    ./tools/bootstrap-clojure
+    CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" ./.deps/clojure/bin/clojure -Srepro -P
+    ./tools/verify-jvm-deps
+
+[private]
+_jvm-clean-deps:
+    rm -rf .deps
+
+[private]
+_jvm-clean-build:
+    rm -rf .cpcache
+
+[private]
 _cargo-deps:
     CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 fetch --locked
     CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 metadata --locked --offline --format-version 1 >/dev/null
@@ -351,11 +365,34 @@ retrie-clean-build: _python-clean-build
 # Clean retrie dependencies and build artifacts
 retrie-clean: retrie-clean-build retrie-clean-deps
 
+# Install and verify exrex dependencies
+exrex-deps: _python-deps
+    uv run --frozen -- python -c 'import importlib.metadata; assert importlib.metadata.version("exrex") == "0.12.0"'
+
+# Load-check the upstream exrex CLI module
+exrex-build:
+    uv run --frozen -- python -c 'import exrex; assert callable(exrex.__main__)'
+
+# Test the upstream exrex CLI
+exrex-test:
+    uv run --frozen -- python -m unittest test.exrex_cli_test
+
+# Run the upstream exrex CLI
+[no-exit-message]
+exrex-run *args:
+    @exec uv run --frozen -- exrex "$@"
+
+# Clean shared Python dependencies
+exrex-clean-deps: _python-clean-deps
+
+# Clean shared Python bytecode artifacts
+exrex-clean-build: _python-clean-build
+
+# Clean exrex dependencies and build artifacts
+exrex-clean: exrex-clean-build exrex-clean-deps
+
 # Install and verify Frak dependencies
-frak-deps:
-    ./tools/bootstrap-clojure
-    CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" ./.deps/clojure/bin/clojure -Srepro -P -M:frak
-    ./tools/verify-jvm-deps
+frak-deps: _jvm-deps
 
 # Load-check the Frak namespace
 frak-build:
@@ -371,15 +408,39 @@ frak-run *args:
     @exec env CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" ./.deps/clojure/bin/clojure -Srepro -M:frak "$@"
 
 # Clean Frak dependencies
-frak-clean-deps:
-    rm -rf .deps
+frak-clean-deps: _jvm-clean-deps
 
 # Clean Frak classpath build caches
-frak-clean-build:
-    rm -rf .cpcache
+frak-clean-build: _jvm-clean-build
 
 # Clean Frak dependencies and build artifacts
 frak-clean: frak-clean-build frak-clean-deps
+
+# Install and verify Generex dependencies
+generex-deps: _jvm-deps
+    ./bin/generex --version
+
+# Load-check the Generex CLI namespace
+generex-build:
+    CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" ./.deps/clojure/bin/clojure -Srepro -M -e "(require 'generex-cli)"
+
+# Test the Generex CLI
+generex-test:
+    ./test/generex_cli_test.sh
+
+# Run the Generex CLI
+[no-exit-message]
+generex-run *args:
+    @exec ./bin/generex "$@"
+
+# Clean shared JVM dependencies
+generex-clean-deps: _jvm-clean-deps
+
+# Clean shared JVM build caches
+generex-clean-build: _jvm-clean-build
+
+# Clean Generex dependencies and build artifacts
+generex-clean: generex-clean-build generex-clean-deps
 
 # Fetch and verify regextrie Rust dependencies
 regextrie-rust-deps: _cargo-deps
@@ -405,6 +466,31 @@ regextrie-rust-clean-build: _cargo-clean-build
 
 # Clean regextrie Rust dependencies and build artifacts
 regextrie-rust-clean: regextrie-rust-clean-build regextrie-rust-clean-deps
+
+# Fetch and verify rand_regex Rust dependencies
+rand-regex-deps: _cargo-deps
+
+# Build the rand_regex Rust CLI
+rand-regex-build:
+    CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 build --locked --bin rand-regex
+
+# Test the rand_regex Rust CLI
+rand-regex-test:
+    CARGO_HOME="$PWD/.cargo-home" cargo +1.87.0 nextest run --locked --test rand_regex_cli
+
+# Run the rand_regex Rust CLI
+[no-exit-message]
+rand-regex-run *args:
+    @exec ./bin/rand-regex "$@"
+
+# Clean shared Cargo dependencies
+rand-regex-clean-deps: _cargo-clean-deps
+
+# Clean shared Cargo build artifacts
+rand-regex-clean-build: _cargo-clean-build
+
+# Clean rand_regex Rust dependencies and build artifacts
+rand-regex-clean: rand-regex-clean-build rand-regex-clean-deps
 
 # Fetch and verify grex Rust test dependencies
 grex-rust-deps: _cargo-deps

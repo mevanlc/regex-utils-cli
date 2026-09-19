@@ -177,9 +177,9 @@ eb73ac08cf49ba840c88ba67beef11336ca554333d9408808d78946e0feb9ddb  .deps/m2/org/c
 Add `tools/verify-jvm-deps`, an executable POSIX shell verifier that resolves the
 root from its own path, changes to it, selects `sha256sum -c` or `shasum -a 256 -c`,
 and checks `jvm-deps.sha256`. It must also enumerate JARs under `.deps/m2` and fail
-if any are absent from the manifest. Compare `clojure -Stree` against the exact
-five-node graph as a separate acceptance gate so a changed POM cannot introduce an
-unlisted runtime artifact.
+if any are absent from the manifest. Compare `clojure -Stree` against Frak's exact
+five-node closure within the checked-in shared JVM graph as a separate acceptance
+gate so a changed POM cannot introduce an unlisted runtime artifact.
 
 Append these project-local generated paths to `.gitignore`:
 
@@ -344,8 +344,10 @@ One valid output is `(?:-e|foo)` plus LF.
 
 ## Implementation Milestones
 
-1. Add `deps.edn` with the exact five-JAR graph, exclusions, repositories, local
-   Maven path, and `:frak` main alias. Verify the published entry point is present.
+1. Add `deps.edn` with Frak's exact five-JAR closure, exclusions, repositories,
+   local Maven path, and `:frak` main alias. Verify the published entry point is
+   present. Keep later additions to the shared JVM graph explicit and independently
+   integrity-checked.
 2. Add the pinned Clojure CLI bootstrap and ignore rules; prove a clean JDK-only
    checkout installs tooling entirely under `.deps/` and honors cached/offline use.
 3. Add the artifact hash manifest and verifier; prepare dependencies, verify every
@@ -372,10 +374,11 @@ CLJ_CONFIG="$PWD/.deps/clj-config" CLJ_CACHE="$PWD/.deps/clj-cache" \
   ./.deps/clojure/bin/clojure -Srepro -Stree
 ```
 
-Assert tool version `1.12.5.1664`, project/local config and cache paths, the exact
-five-node dependency tree, all recorded hashes, no ClojureScript, and no artifacts
-outside `.deps/`. Run the bootstrap and a known Frak command again with network
-disabled; assert neither requires a download or changes the installation.
+Assert tool version `1.12.5.1664`, project/local config and cache paths, Frak's exact
+five-node closure within the checked-in shared JVM tree, all recorded hashes, no
+ClojureScript, and no artifacts outside `.deps/`. Run the bootstrap and a known Frak
+command again with network disabled; assert neither requires a download or changes
+the installation.
 
 Test with Java 17 and the current LTS JDK. Fail before download with a concise
 bootstrap diagnostic for missing/old Java, missing hash utility, corrupt archive,
@@ -437,8 +440,8 @@ It must use the full project-local command prefix and:
 ## Acceptance Criteria
 
 - A clean POSIX checkout with JDK 17+ bootstraps the pinned official Clojure CLI and
-  exact five runtime JARs entirely beneath ignored project-local paths, with archive
-  and JAR integrity checks passing.
+  the complete checked-in shared JVM graph entirely beneath ignored project-local
+  paths, with archive and JAR integrity checks passing.
 - `deps.edn` excludes unused ClojureScript and old language coordinates, resolves
   only the documented graph, ignores user Clojure configuration under `-Srepro`, and
   supports prepared offline invocation.

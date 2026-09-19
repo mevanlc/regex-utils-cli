@@ -1,0 +1,18 @@
+#!/bin/sh
+
+set -eu
+
+PROGRAM=rand-regex
+SCRIPT_DIR=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+ROOT=$(dirname "$SCRIPT_DIR")
+
+if ! command -v cargo >/dev/null 2>&1; then
+    printf '%s: cargo not found on PATH\n' "$PROGRAM" >&2
+    exit 1
+fi
+
+export CARGO_HOME="$ROOT/.cargo-home"
+export CARGO_TARGET_DIR="$ROOT/target"
+
+exec cargo +1.87.0 run --quiet --locked --manifest-path "$ROOT/Cargo.toml" \
+    --bin rand-regex -- "$@"
